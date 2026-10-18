@@ -706,3 +706,13 @@ def test_a_browser_dialog_is_answered_with_handle_dialog():
     # Without a browser dialog, "dialog" is refused: a dialog in the outline is clicked.
     calm = parse(agent_body([("snapshot", {}, FORM)]))
     assert check({"action": "dialog", "accept": False, "reason": "r"}, calm).command is None
+
+
+def test_a_press_that_worked_is_not_repeated():
+    pressed = ("press", {"keys": "Enter", "target": {"ref": "bo46"}},
+               "press · [bo46] button «Add question» · Enter · keyboard · dispatched; effect: changed · 1 mutation")
+    turn = parse(agent_body([("snapshot", {}, FORM), pressed], task="Click the Add question button once."))
+    again = check({"action": "click", "ref": "bo46", "reason": "r"}, turn)
+    assert again.command is None and "answer done" in again.problems[0]
+    many = parse(agent_body([("snapshot", {}, FORM), pressed], task="Click the Add question button 3 times."))
+    assert check({"action": "click", "ref": "bo46", "reason": "r"}, many).command

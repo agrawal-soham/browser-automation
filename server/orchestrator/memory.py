@@ -57,6 +57,8 @@ ID_SEGMENT = re.compile(r"^(?=.*\d)[\w-]{6,}$|^[\w-]{20,}$")
 # Below these, a candidate is not even a hint.
 HINT_COSINE = 0.6
 HINT_WORDS = 0.3
+# A request that asks for an action more than once (the same words check.py uses).
+REPEATS = re.compile(r"\b(\d+|two|three|four|five|twice|times|each|every|all|again|more)\b", re.I)
 
 
 def host_of(url: str) -> str:
@@ -106,7 +108,17 @@ def fingerprint(outline: str, url: str) -> dict:
 
 
 def fingerprint_key(fp: dict) -> str:
-    return hashlib.sha256(json.dumps(fp, sort_keys=True).encode()).hexdigest()[:16]
+    """The page's element names and state, without the address: the first page of a run has no known address when the
+    run is recorded, but the same page when its description was cached."""
+    page = {k: v for k, v in fp.items() if k != "path"}
+    return hashlib.sha256(json.dumps(page, sort_keys=True).encode()).hexdigest()[:16]
+
+
+def same_kind(a: str | None, b: str | None) -> bool:
+    """Whether two page kinds from the vision model name the same thing: it words them freely ("Form editor",
+    "form_editor"), so the words are compared, not the strings."""
+    x, y = set(WORD.findall((a or "").lower().replace("_", " "))), set(WORD.findall((b or "").lower().replace("_", " ")))
+    return bool(x and y) and len(x & y) / len(x | y) >= 0.5
 
 
 def similarity(a: dict, b: dict) -> float:
@@ -291,8 +303,17 @@ def playbook_from(turn: Turn, perceptions: dict[str, dict] | None = None) -> dic
                 entry["keys"] = str(args.get("keys", "Enter"))
             if step.name == "handle_dialog":
                 entry["accept"] = bool(args.get("accept"))
+        if out and not REPEATS.search(turn.task) and _same_step(out[-1], entry):
+            # The same action on the same element twice in a row: one was enough (a model that did not believe its
+            # first press). A task that asks for more than one keeps them.
+            continue
         out.append(entry)
     return {"host": host, "template": template, "steps": out}
+
+
+def _same_step(a: dict, b: dict) -> bool:
+    keys = ("action", "label", "index", "value", "keys", "url", "accept")
+    return all(a.get(k) == b.get(k) for k in keys) and bool(a.get("label") or a.get("url"))
 
 
 # --- the store -----------------------------------------------------------------------------------------------------
@@ -461,7 +482,12 @@ class SiteMemory:
         ) == path_pattern(turn.active_url):
             k += 1
         if k > len(book.steps):
-            return Replay(None, book, k, "the playbook is done")
+            if playbook_id is None:
+                return Replay(None, book, k, "the playbook is done")
+            # Every step was replayed and worked: claim done; check() and the vision model's final check decide.
+            summary = f"Done the same way as before on {book.host}: {len(book.steps)} steps repeated."
+            return Replay({"action": "done", "outcome": "success", "summary": summary,
+                           "reason": f"All steps of memory #{book.id} worked"}, book, k)
         step = book.steps[k - 1]
         reason = f"Same as before on {book.host} (memory #{book.id}, step {k} of {len(book.steps)})"
         if step["action"] == "navigate":
@@ -472,11 +498,15 @@ class SiteMemory:
         stored = step.get("fingerprint")
         if stored and not page_matches(stored, current, self.settings.memory_match):
             return Replay(None, book, k, f"the page differs ({similarity(stored, current):.2f} alike)")
-        if len(REF.findall(turn.snapshot)) < self.settings.perceive_min_refs:
+        earlier = book.steps[k - 2].get("fingerprint") if k > 1 and playbook_id is not None else None
+        same_page_as_before = bool(earlier and stored and fingerprint_key(earlier) == fingerprint_key(stored))
+        if len(REF.findall(turn.snapshot)) < self.settings.perceive_min_refs and not same_page_as_before:
+            # A thin page is told apart by its description; once a replayed step matched it, the next steps on the
+            # same page do not ask again.
             kind = (step.get("perception") or {}).get("page_kind")
             if perception is None:
                 return Replay(None, book, k, "a thin page needs its description first", needs_perception=True)
-            if not kind or kind != perception.get("page_kind"):
+            if not same_kind(kind, perception.get("page_kind")):
                 return Replay(None, book, k, "the page description differs")
         raw: dict = {"reason": reason}
         if step.get("label"):

@@ -182,6 +182,12 @@ def _same_url(a: str, b: str) -> bool:
     return bool(a and b) and norm(a) == norm(b)
 
 
+# A request that asks for an action more than once ("add 3 rows", "twice", "each"): repeats are allowed.
+REPEATS = re.compile(r"\b(\d+|two|three|four|five|twice|times|each|every|all|again|more)\b", re.I)
+# A receipt that says the page reacted.
+CHANGED = re.compile(r"effect:\s*changed", re.I)
+
+
 def repeated(cmd: Command, turn: Turn) -> str | None:
     """A note when the command only repeats what is already done: the page it would open is open, or the last action
     was this same navigate or the same value into the same field (the cause of the six-navigate loop on Google Forms)."""
@@ -197,6 +203,14 @@ def repeated(cmd: Command, turn: Turn) -> str | None:
         return None
     if cmd.action == "navigate" and last.name == "navigate" and _same_url(cmd.url or "", args.get("url", "")):
         return "You just opened this same address and the page is the result. Answer done, or act on the page."
+    if cmd.action in ("click", "press") and cmd.ref and last.name in ("click", "press") and not REPEATS.search(turn.task):
+        # The press that worked is not pressed again: on the covered-button fixture (2026-10-18) qwen3:8b clicked
+        # "Add question" again after the keyboard fallback had added the question, and each click became one more.
+        target = args.get("target") if isinstance(args.get("target"), dict) else {}
+        same_page = not re.search(r"navigation: |new document|URL →", last.result)
+        if target.get("ref") == cmd.ref and same_page and not Turn.failed(last) and CHANGED.search(last.result):
+            return (f"You just activated {turn.element_label(cmd.ref)} and the page changed. The request does not ask "
+                    "for it more than once: check the outline, and answer done if the request is done.")
     if cmd.action == "type" and last.name in ("set", "type"):
         target = args.get("target") if isinstance(args.get("target"), dict) else {}
         if target.get("ref") == cmd.ref and args.get("value", args.get("text")) == cmd.value and not last.result.startswith("error"):

@@ -101,3 +101,24 @@ def test_ui_tars_points_and_calibration():
     assert grounding.pick_convention((cx / w * 1000, cy / h * 1000)) == "norm1000"
     assert grounding.pick_convention((10, 10)) is None
     assert grounding.calibration_image()
+
+
+def test_page_kinds_are_compared_by_words():
+    from orchestrator.memory import same_kind
+
+    assert same_kind("Form editor", "form_editor") and same_kind("contact form", "Contact Form page")
+    assert not same_kind("search results", "login") and not same_kind(None, "form")
+
+
+def test_repeated_presses_are_kept_once_and_a_finished_replay_claims_done(tmp_path):
+    press = ("press", {"keys": "Enter", "target": {"ref": "a1"}}, "press · dispatched; effect: changed")
+    page = YT.format(p="a")
+    turn = parse(body([("snapshot", {}, page), press, ("snapshot", {}, page), press], "press search once", ON_YT))
+    assert len(playbook_from(turn)["steps"]) == 1
+    mem = memory(tmp_path)
+    asyncio.run(mem.record(turn))
+    replayed = ("press", {"keys": "Enter", "target": {"ref": "a1"}, "intent": "Same as before on youtube.com (memory #1, step 1 of 1)"},
+                "press · dispatched; effect: changed")
+    after = parse(body([("snapshot", {}, page), replayed, ("snapshot", {}, page)], "press search once", ON_YT))
+    r = asyncio.run(mem.next_step(after))
+    assert r.raw["action"] == "done" and r.raw["outcome"] == "success"
