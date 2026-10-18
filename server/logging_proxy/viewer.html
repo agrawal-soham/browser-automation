@@ -271,6 +271,7 @@ function itemHtml(r) {
   const s = r.summary || {};
   let prev = "";
   if (r.state === "pending") prev = `<span style="color:var(--accent)">waiting for local LLM…</span>`;
+  else if (r.trace_error) prev = `<span style="color:var(--err)">[${esc(r.trace_error.source)}] ${esc(r.trace_error.message.slice(0, 140))}</span>`;
   else if (r.error) prev = `<span style="color:var(--err)">${esc(r.error.slice(0, 140))}</span>`;
   else if (s.tool_calls?.length) prev = `→ <span class="fn">${esc(s.tool_calls.join(", "))}()</span> ${esc(s.output_preview || "")}`;
   else prev = esc(s.output_preview || "(empty)");
@@ -280,6 +281,7 @@ function itemHtml(r) {
       <span class="seq">#${r.seq}</span>
       <span class="badge agent-${r.agent}">${r.agent}</span>
       <span class="api">${r.api}${r.stream ? " · sse" : ""}${r.shim ? " · tool-shim" : ""}</span>
+      ${r.trace_id ? `<span class="api" title="Trace ID: ${esc(r.trace_id)}">trace · ${esc(r.trace_id.slice(0, 8))}</span>` : ""}
       <span class="time">${fmtTime(r.ts)} · ${fmtMs(r.latency_ms)}</span>
     </div>
     <div class="meta"><span>${s.messages ?? 0} msgs</span><span>${s.images ?? 0} img</span><span>${s.tools?.length ? s.tools.length + " tools" : s.response_format || "text"}</span>${s.prompt_tokens != null ? `<span>${s.prompt_tokens}→${s.completion_tokens} tok</span>` : ""}</div>
@@ -356,7 +358,8 @@ function outputHtml(r) {
   const resp = r.upstream_response;
   if (r.state === "pending") return `<div class="callout note">The local LLM is still working on this request…</div>`;
   let h = "";
-  if (r.error) h += `<div class="callout err"><b>Error ${r.status ?? ""}</b><br><pre class="txt" style="color:inherit">${esc(r.error)}</pre></div>`;
+  if (r.trace_error) h += `<div class="callout err"><b>Trace Error [${esc(r.trace_error.source)}]</b>${r.trace_error.status != null ? ` (HTTP ${r.trace_error.status})` : ""}<br><pre class="txt" style="color:inherit">${esc(r.trace_error.message)}</pre></div>`;
+  else if (r.error) h += `<div class="callout err"><b>Error ${r.status ?? ""}</b><br><pre class="txt" style="color:inherit">${esc(r.error)}</pre></div>`;
   if (!resp) return h;
   const msg = resp.choices?.[0]?.message || {};
   const fin = resp.choices?.[0]?.finish_reason;
@@ -398,6 +401,8 @@ function toolsHtml(req) {
 function rawHtml(r) {
   const blocks = [
     ["Request headers (selected)", r.headers],
+    r.trace_id && ["Trace ID (correlated)", { trace_id: r.trace_id }],
+    r.trace_error && ["Trace error (correlated)", r.trace_error],
     [`Client request (${r.api} format, as sent by Nanobrowser)`, r.client_request],
     r.pre_shim_request && ["Before tool emulation (OpenAI format, with tools)", r.pre_shim_request],
     r.upstream_request && [r.shim ? "Upstream request (tools replaced by JSON instructions, sent to the local LLM)" : "Upstream request (translated → OpenAI, sent to the local LLM)", r.upstream_request],
@@ -455,7 +460,7 @@ async function renderDetail() {
       <div class="flow">
         <div class="node">Nanobrowser · <span class="badge agent-${r.agent}">${r.agent}</span><small>${esc(r.api)} ${esc(r.path)}</small></div>
         <span class="arrow">──▶</span>
-        <div class="node">Proxy #${r.seq}<small>${esc(fmtTime(r.ts))}${r.api !== "openai" ? " · translated" : " · pass-through"}${r.shim ? " · tool-shim" : ""}</small></div>
+        <div class="node">Proxy #${r.seq}${r.trace_id ? `<br><small style="color:var(--accent)">trace · ${esc(r.trace_id.slice(0, 8))}</small>` : ""}<small>${esc(fmtTime(r.ts))}${r.api !== "openai" ? " · translated" : " · pass-through"}${r.shim ? " · tool-shim" : ""}</small></div>
         <span class="arrow">──▶</span>
         <div class="node">Local LLM<small>${esc(r.upstream_request?.model || r.client_request?.model || "")}</small></div>
         <span class="arrow">◀── ${r.status ?? "…"} · ${fmtMs(r.latency_ms)}</span>
