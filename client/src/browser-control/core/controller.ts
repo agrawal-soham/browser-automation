@@ -78,6 +78,17 @@ export interface SessionConfig {
    * user's disk.
    */
   uploadSources?: Array<'paths' | 'attachments'>;
+  /**
+   * The host's privacy hooks for screenshots, absent from the protocol: which outline nodes hold personal data the
+   * image must hide (painted over like masked secrets), and a note of each image after masking, so the host can let
+   * exactly those images leave the browser. Without it, only the layer's own secrets are hidden.
+   */
+  imagePrivacy?: ImagePrivacy;
+}
+
+export interface ImagePrivacy {
+  hide(name: string, value: string | undefined): boolean;
+  onMasked(base64: string): void;
 }
 
 export interface AuditEntry {
@@ -102,6 +113,11 @@ export interface TabState {
   /** Increases with every dispatched action; a capture taken before it is not reused. */
   actionSeq: number;
   last?: { observation: Observation; actionSeq: number; at: number; loaders: Array<[string, string]> };
+  /**
+   * The latest screenshot of the visible page: a point target is in its CSS pixels, so it is valid only while the
+   * page has the same document, scroll position and size.
+   */
+  shot?: { loaderId: string; scrollX: number; scrollY: number; width: number; height: number };
   /** The user cancelled the debugger bar; nothing reattaches until the user shares the tab again. */
   detachedByUser: boolean;
   pending: PendingModal[];
@@ -464,13 +480,23 @@ export class Session {
   readonly config: Required<
     Omit<
       SessionConfig,
-      'capabilities' | 'urlPolicy' | 'confirm' | 'boundary' | 'handover' | 'decideWrite' | 'reveal' | 'onTabJoined'
+      | 'capabilities'
+      | 'urlPolicy'
+      | 'confirm'
+      | 'boundary'
+      | 'handover'
+      | 'decideWrite'
+      | 'reveal'
+      | 'onTabJoined'
+      | 'imagePrivacy'
     >
   >;
   readonly hooks: Pick<SessionConfig, 'reveal' | 'onTabJoined'>;
   readonly decideWrite: SessionConfig['decideWrite'];
   /** Fixed when the session is made: a session never gains or loses its hand-over policy. */
   readonly handover: boolean;
+  /** Fixed when the session is made, like the hand-over policy. */
+  readonly imagePrivacy: ImagePrivacy | undefined;
   #boundary: DefuseOptions;
   #urlPolicy: UrlPolicy;
   #confirm: ConfirmPolicy;
@@ -485,6 +511,7 @@ export class Session {
     config: SessionConfig,
   ) {
     this.handover = config.handover ?? false;
+    this.imagePrivacy = config.imagePrivacy;
     this.decideWrite = config.decideWrite;
     this.hooks = { reveal: config.reveal, onTabJoined: config.onTabJoined };
     this.capabilities = new Set(this.#allowed(config.capabilities ?? []));

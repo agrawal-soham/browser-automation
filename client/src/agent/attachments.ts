@@ -2,6 +2,7 @@
 // the newest user message's files are added: a text file inside the boundary with the label `source=attachment «name»`,
 // up to a budget scaled to the window; an image after its fixed line. `read_attachment` pages through the rest.
 import { quote, siteOf } from '@src/browser-control';
+import { imageRegistry } from '@src/privacy';
 import { getBlob } from '@src/store/conversations';
 import { attachmentKind } from '@src/store/attachments';
 import type { MessagePart, StoredBlob } from '@src/store/types';
@@ -68,8 +69,12 @@ export async function attachmentParts(
     const kind = attachmentKind(blob.name, blob.mimeType);
     if (!('kind' in kind)) continue;
     if (kind.kind === 'image') {
-      if (options.vision)
-        out.push({ type: 'image', data: await base64(blob.data), mediaType: blob.mimeType, note: ATTACHED_IMAGE_LINE });
+      if (options.vision) {
+        const data = await base64(blob.data);
+        // The user attached it on purpose: it may leave the browser as it is (the privacy layer does not mask it).
+        imageRegistry.allow(data, 'user-attachment');
+        out.push({ type: 'image', data, mediaType: blob.mimeType, note: ATTACHED_IMAGE_LINE });
+      }
       continue;
     }
     const text = await blob.data.text();

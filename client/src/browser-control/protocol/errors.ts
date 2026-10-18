@@ -5,6 +5,7 @@ export const ERROR_CODES = [
   'REF_NOT_PRESENTED',
   'REF_TAB_MISMATCH',
   'STALE_DOCUMENT',
+  'STALE_POINT',
   'NODE_DETACHED',
   'TARGET_CHANGED',
   'AMBIGUOUS_TARGET',
@@ -46,6 +47,8 @@ export const DEFAULT_HINTS: Record<ErrorCode, string> = {
   REF_NOT_PRESENTED: 'This ref was not in the latest observation of its tab. Take a new snapshot and choose again.',
   REF_TAB_MISMATCH: 'The ref belongs to a different tab than the tabId given. Omit tabId or use the ref’s tab.',
   STALE_DOCUMENT: 'The page has loaded a new document since this ref was shown. Take a new snapshot.',
+  STALE_POINT:
+    'The point is not on the page as the last screenshot showed it (it scrolled, resized or loaded). Take a new screenshot and give a point on it.',
   NODE_DETACHED: 'The element is no longer in the page. Take a new snapshot and choose again.',
   TARGET_CHANGED: 'The element is no longer what was shown. Take a new snapshot and choose again.',
   AMBIGUOUS_TARGET: 'More than one element matches. Use a ref, or add name, nth or within.',

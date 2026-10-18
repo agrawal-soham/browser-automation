@@ -131,7 +131,8 @@ export const TOOL_SPECS: ToolSpec[] = [
   },
   {
     name: 'wait',
-    description: 'Wait for text to appear or disappear, an element state, a URL, or a fixed time.',
+    description:
+      'Wait for text to appear or disappear, an element state, a URL, the page to finish loading and settle, or a fixed time.',
     args: WaitArgsSchema,
     readOnly: true,
     capability: 'core',

@@ -4,6 +4,7 @@
 import type { Controller, Session, SessionConfig, TabsData } from '@src/browser-control';
 import type { LayerPort } from '@src/agent/ports';
 import type { PageBorder } from './border';
+import { imagePrivacy, rememberAnswer, swapToolArgs } from './privacy';
 
 /** The extension's labels, defused wherever page text holds them. */
 export const AGENT_LABELS = ['[Nanobrowser note', 'browser-state', 'agent-notes', 'custom-instructions'];
@@ -20,6 +21,8 @@ export function createAgentSession(controller: Controller, config: SessionConfig
     confirmTimeoutMs: Infinity,
     askTimeoutMs: ASK_TIMEOUT_MS,
     boundary: { labels: AGENT_LABELS },
+    // Screenshots hide personal values as well as secrets, and only images masked this way may reach the model.
+    imagePrivacy,
     ...config,
   });
 }
@@ -42,8 +45,16 @@ function dialogOpen(session: Session, tabId: number): boolean {
 /** The loop's view of a session (src/agent/ports.ts). A screenshot fades the page border out first. */
 export function layerPort(session: Session, border?: Pick<PageBorder, 'around'>): LayerPort {
   return {
-    call: (tool, args, signal) => {
-      const run = () => session.call(tool, args, { signal });
+    call: async (tool, raw, signal) => {
+      // Tags become real values here, at dispatch, and nowhere earlier; a bent or unknown tag refuses the call.
+      const swap = swapToolArgs(raw);
+      if (!swap.ok) return swap.result;
+      const args = swap.args;
+      const run = () =>
+        session.call(tool, args, { signal }).then(result => {
+          rememberAnswer(tool, result);
+          return result;
+        });
       if (tool !== 'screenshot' || !border) return run();
       const tabId = screenshotTab(session, args);
       if (tabId === null || dialogOpen(session, tabId)) return run();

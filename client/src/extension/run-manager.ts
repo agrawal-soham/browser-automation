@@ -1294,6 +1294,10 @@ export class RunManager {
         }
         this.#modes.set(conversationId, conversation.mode);
         const session = await this.#openSession(conversationId);
+        // A vision model may name a point of its last screenshot (a canvas cell, an icon with no ref); the layer turns
+        // it into the element there and applies the same checks and confirmations as to a ref.
+        const others = [...session.capabilities].filter(c => c !== 'vision');
+        session.setCapabilities(model.profile.vision ? [...others, 'vision'] : others);
         record.tabs = session.tabIds();
         const tools = toolsForRun({ vision: model.profile.vision });
         const loop = new AgentLoop({

@@ -19,6 +19,7 @@ import './wait-targets';
 import './hidden-payment-frame';
 import './clicks-dialogs-frames';
 import './drawn-over-pages';
+import './point-targets';
 import './masked-names';
 import './set-g';
 import './set-f';

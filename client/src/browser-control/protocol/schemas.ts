@@ -138,6 +138,7 @@ export const WaitArgsSchema = z.strictObject({
   target: TargetSchema.optional(),
   state: z.enum(['visible', 'hidden', 'attached', 'detached', 'enabled']).optional(),
   url: z.string().optional(),
+  settled: z.boolean().optional().describe('Wait until the page has loaded and nothing in it has changed for a moment'),
   ms: z.number().int().min(0).max(60_000).optional(),
 });
 
@@ -218,4 +219,8 @@ export function isRefTarget(target: Target): target is RefTarget {
 
 export function isSemanticTarget(target: Target): target is SemanticTarget {
   return 'role' in target;
+}
+
+export function isPointTarget(target: Target): target is z.infer<typeof PointTargetSchema> {
+  return 'x' in target && 'y' in target;
 }

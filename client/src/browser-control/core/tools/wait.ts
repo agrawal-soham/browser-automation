@@ -1,4 +1,4 @@
-// `wait`: for text to appear or go, a URL, an element state, or a fixed time. Read-only.
+// `wait`: for text to appear or go, a URL, an element state, the page to settle, or a fixed time. Read-only.
 import { isLayerError, LayerError } from '../../protocol/errors';
 import type { WaitArgs } from '../../protocol/schemas';
 import type { ProbeState } from '../../probe';
@@ -10,6 +10,8 @@ import { quote } from '../text';
 
 const POLL_MS = 100;
 const DEFAULT_TIMEOUT_MS = 5_000;
+/** How long the document must stay unchanged to count as settled. */
+const QUIET_MS = 500;
 /** A target that cannot be resolved is not in the page: the page has not rendered it yet, or has removed it. */
 const ABSENT = new Set(['NO_MATCH', 'NODE_DETACHED', 'STALE_DOCUMENT', 'FRAME_DETACHED']);
 
@@ -27,8 +29,26 @@ function pause(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
+/**
+ * The `settled` condition across polls: the document has loaded (`complete`) and its mutation count has not changed
+ * for `quietMs`. Returns what is still missing, or null once settled.
+ */
+export function settleTracker(quietMs = QUIET_MS) {
+  let count = -1;
+  let since = 0;
+  return (readyState: string, mutations: number, now: number): string | null => {
+    if (mutations !== count) {
+      count = mutations;
+      since = now;
+    }
+    if (readyState !== 'complete') return `the page is still loading (${readyState})`;
+    if (now - since < quietMs) return 'the page is still changing';
+    return null;
+  };
+}
+
 /** Checks every condition once; returns the unmet ones with what was seen. */
-async function unmet(ctx: ToolContext, args: WaitArgs): Promise<string[]> {
+async function unmet(ctx: ToolContext, args: WaitArgs, settle: ReturnType<typeof settleTracker>): Promise<string[]> {
   const out: string[] = [];
   const attachment = await ctx.attach();
   const probe = ctx.tab().probe!;
@@ -36,6 +56,14 @@ async function unmet(ctx: ToolContext, args: WaitArgs): Promise<string[]> {
   if (args.url !== undefined) {
     const url = (await ctx.controller.host.tabs.get(ctx.tab().tabId))?.url ?? '';
     if (!url.includes(args.url)) out.push(`URL is ${url}`);
+  }
+  if (args.settled) {
+    const [readyState, mutations] = await Promise.all([
+      probe.callGlobal<string>(main, 'readyState'),
+      probe.callGlobal<number>(main, 'mutations'),
+    ]);
+    const missing = settle(readyState, mutations, performance.now());
+    if (missing) out.push(missing);
   }
   if (args.text !== undefined && !(await probe.callGlobal<boolean>(main, 'hasText', args.text))) {
     out.push(`${quote(args.text)} is not on the page`);
@@ -79,7 +107,10 @@ async function unmet(ctx: ToolContext, args: WaitArgs): Promise<string[]> {
 }
 
 export async function wait(ctx: ToolContext, args: WaitArgs): Promise<ToolOutcome> {
-  const conditions = [args.text, args.textGone, args.url, args.target].filter(c => c !== undefined).length;
+  const conditions = [args.text, args.textGone, args.url, args.target, args.settled || undefined].filter(
+    c => c !== undefined,
+  ).length;
+  const settle = settleTracker();
   const start = performance.now();
   if (!conditions) {
     if (args.ms === undefined) throw new LayerError('INVALID_ARGUMENT', 'wait needs a condition or ms');
@@ -91,7 +122,7 @@ export async function wait(ctx: ToolContext, args: WaitArgs): Promise<ToolOutcom
   let last: string[] = [];
   for (;;) {
     checkCancelled(ctx);
-    last = await unmet(ctx, args);
+    last = await unmet(ctx, args, settle);
     const elapsed = Math.round(performance.now() - start);
     if (!last.length) {
       const what = [
@@ -99,6 +130,7 @@ export async function wait(ctx: ToolContext, args: WaitArgs): Promise<ToolOutcom
         args.textGone !== undefined && `text gone ${quote(args.textGone)}`,
         args.url !== undefined && `URL contains ${quote(args.url)}`,
         args.target && `target ${args.state ?? 'visible'}`,
+        args.settled && 'page settled',
       ]
         .filter(Boolean)
         .join(', ');
