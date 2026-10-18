@@ -39,12 +39,12 @@ class Settings:
     # Measured on Laptop B (2026-10-18): a description takes 4-37 s, a verify about 9 s. At 10 s most answers were lost.
     vlm_timeout_s: float = float(os.environ.get("VLM_TIMEOUT_S", "60"))
 
-    # When the VLM looks at the page. "thin" (default): only when the outline is thin (few refs: canvas, images, an
-    # unreadable page); no screenshot is taken for a page it will not look at. "auto": every new page's screenshot, and
-    # a fresh screenshot after any action the outline cannot confirm (pipeline/step.py). "never". Each look costs 10-40 s
-    # on Laptop B (28-40 s on the Domino's and YouTube runs, 2026-10-18); the risky-click, ladder and done checks are
-    # not affected.
-    perceive: str = os.environ.get("PERCEIVE", "thin")
+    # When the VLM looks at the page. "pages" (default): once each time the run lands on a page (a navigate, a click
+    # that opened another document), on a thin outline, and after an action neither the outline nor the browser could
+    # confirm. "auto": every new outline as well. "thin": only thin outlines (canvas, images, an unreadable page).
+    # "never". No screenshot is taken for a page the VLM will not look at. Each look costs 10-40 s on Laptop B (28-40 s
+    # on the Domino's and YouTube runs, 2026-10-18); the risky-click, ladder and done checks are not affected.
+    perceive: str = os.environ.get("PERCEIVE", "pages")
     perceive_min_refs: int = int(os.environ.get("PERCEIVE_MIN_REFS", "8"))
 
     # How long the layer's `wait {settled}` may take before an observation after an action (the layer's maximum is 60).

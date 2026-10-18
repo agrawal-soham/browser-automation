@@ -225,8 +225,16 @@ def test_perceive_every_new_page_or_only_thin_outlines():
 
     rich = parse(agent_body([("snapshot", {}, OUTLINE * 3)]))
     thin = parse(agent_body([("snapshot", {}, "[e1] heading «Canvas app»")]))
-    # Default: only a thin outline is described (each look cost 28-40 s on Laptop B, 2026-10-18).
-    assert not wants_perception(rich, Settings()) and wants_perception(thin, Settings())
+    # Default ("pages"): a page is described once when the run lands on it, and a thin outline always.
+    assert wants_perception(rich, Settings()) and wants_perception(thin, Settings())
+    shot = ("screenshot", {"labels": True, "intent": "Show the vision model the page (personal data is masked)"}, SHOT)
+    click = ("click", {"target": {"ref": "e4"}}, "click · dispatched; effect: changed")
+    seen = parse(agent_body([("snapshot", {}, OUTLINE * 3), shot, click, ("snapshot", {}, OUTLINE * 3)]))
+    assert not wants_perception(seen, Settings())
+    moved = ("click", {"target": {"ref": "e4"}}, "click · dispatched\nnavigation: new-document «https://x.test/next»")
+    landed = parse(agent_body([("snapshot", {}, OUTLINE * 3), shot, moved, ("snapshot", {}, OUTLINE * 3)]))
+    assert wants_perception(landed, Settings())
+    assert not wants_perception(rich, Settings(perceive="thin")) and wants_perception(thin, Settings(perceive="thin"))
     every = Settings(perceive="auto")
     assert wants_perception(rich, every) and wants_perception(thin, every)
     assert not wants_perception(thin, Settings(perceive="never"))

@@ -30,6 +30,10 @@ STALE = re.compile(
     r"NODE_DETACHED|STALE_REF|UNKNOWN_REF|NOT_SHOWN|observe before|no longer valid|navigated|navigation: |new document|URL →",
     re.I,
 )
+# A receipt that says the action opened another document or address.
+NEW_PAGE = re.compile(r"navigation: |new document|URL →")
+# The intent of the server's own page picture for the VLM (pipeline/step.py PAGE_SHOT).
+PAGE_SHOT_INTENT = "Show the vision model the page"
 REFUSED_TAG = re.compile(r"error (UNKNOWN_TAG|MALFORMED_TAG)")
 # A failed action's result: the layer's error code, or a receipt saying nothing happened.
 ACTION_ERROR = re.compile(r"\berror ([A-Z_]{3,})")
@@ -157,6 +161,18 @@ class Turn:
         except (json.JSONDecodeError, AttributeError):
             intent = ""
         return intent != CHOICES_INTENT
+
+    def on_new_page(self) -> bool:
+        """No page picture was described since the run last landed on a page: a navigate, a page change in a receipt,
+        or the start of the request."""
+        landed = self.request_start - 1
+        for i, step in enumerate(self.steps):
+            if i >= self.request_start and (step.name == "navigate" or NEW_PAGE.search(step.result)):
+                landed = i
+        return not any(
+            s.name == "screenshot" and PAGE_SHOT_INTENT in s.args and not s.result.startswith("error")
+            for s in self.steps[landed + 1 :]
+        )
 
     def may_have_opened_choices(self, step: Step) -> bool:
         """A click or typing on an element that opens a list of choices (a select, a field that suggests, a menu)

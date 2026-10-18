@@ -121,8 +121,11 @@ def wants_perception(turn: Turn, settings: Settings) -> bool:
     """Whether the VLM should describe a new page's screenshot (see Settings.perceive)."""
     if settings.perceive == "never":
         return False
+    thin = len(REF.findall(turn.snapshot)) < settings.perceive_min_refs
     if settings.perceive == "thin":
-        return len(REF.findall(turn.snapshot)) < settings.perceive_min_refs
+        return thin
+    if settings.perceive == "pages":
+        return thin or turn.on_new_page()
     return True
 
 
@@ -172,7 +175,7 @@ async def run_step(
     act = turn.last_action_index()
     if (
         not replaying
-        and settings.perceive in ("auto", "always")
+        and settings.perceive in ("auto", "always", "pages")
         and link.connected
         and turn.can_screenshot
         and act >= 0
