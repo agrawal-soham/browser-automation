@@ -1,0 +1,43 @@
+{
+ "model": "qwen2.5vl:7b",
+ "max_tokens": 1024,
+ "messages": [
+  {
+   "role": "system",
+   "content": "You are testing a tool connection. Call the tool report_status with status \"ok\". Do not write text."
+  },
+  {
+   "role": "user",
+   "content": "Call report_status now."
+  }
+ ],
+ "tools": [
+  {
+   "type": "function",
+   "function": {
+    "name": "report_status",
+    "description": "Report that the connection works.",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "status": {
+       "type": "string",
+       "enum": [
+        "ok"
+       ]
+      }
+     },
+     "required": [
+      "status"
+     ],
+     "additionalProperties": false
+    }
+   }
+  }
+ ],
+ "tool_choice": "auto",
+ "stream": true,
+ "stream_options": {
+  "include_usage": true
+ }
+}

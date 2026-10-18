@@ -1,0 +1,32 @@
+{
+ "id": "chatcmpl-829",
+ "object": "chat.completion",
+ "created": 1792260627,
+ "model": "qwen2.5vl:7b",
+ "system_fingerprint": "fp_ollama",
+ "choices": [
+  {
+   "index": 0,
+   "message": {
+    "role": "assistant",
+    "content": "",
+    "tool_calls": [
+     {
+      "id": "call_d9bb3f082678",
+      "type": "function",
+      "function": {
+       "name": "report_status",
+       "arguments": "{\"status\": \"ok\"}"
+      }
+     }
+    ]
+   },
+   "finish_reason": "tool_calls"
+  }
+ ],
+ "usage": {
+  "prompt_tokens": 120,
+  "completion_tokens": 7,
+  "total_tokens": 127
+ }
+}

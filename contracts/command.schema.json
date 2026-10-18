@@ -1,0 +1,192 @@
+{
+  "$defs": {
+    "Point": {
+      "properties": {
+        "x": {
+          "title": "X",
+          "type": "number"
+        },
+        "y": {
+          "title": "Y",
+          "type": "number"
+        }
+      },
+      "required": [
+        "x",
+        "y"
+      ],
+      "title": "Point",
+      "type": "object"
+    }
+  },
+  "properties": {
+    "action": {
+      "enum": [
+        "navigate",
+        "click",
+        "type",
+        "scroll",
+        "ask_user",
+        "done",
+        "press"
+      ],
+      "title": "Action",
+      "type": "string"
+    },
+    "url": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "navigate: the address to open, such as https://www.youtube.com",
+      "title": "Url"
+    },
+    "ref": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "ref of the element from the page outline, such as e12",
+      "title": "Ref"
+    },
+    "point": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Point"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "CSS pixels on the screenshot; set by the server's grid, never the model"
+    },
+    "visual": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "click: what to click as it looks, when the outline has no ref for it (cell A1)",
+      "title": "Visual"
+    },
+    "value": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "text to type; copy placeholders like [[NAME_1]] exactly",
+      "title": "Value"
+    },
+    "direction": {
+      "anyOf": [
+        {
+          "enum": [
+            "up",
+            "down"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Direction"
+    },
+    "message": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "ask_user: the question for the user",
+      "title": "Message"
+    },
+    "ask_kind": {
+      "default": "input",
+      "enum": [
+        "input",
+        "takeover"
+      ],
+      "title": "Ask Kind",
+      "type": "string"
+    },
+    "keys": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Keys"
+    },
+    "outcome": {
+      "anyOf": [
+        {
+          "enum": [
+            "success",
+            "partial",
+            "failed"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Outcome"
+    },
+    "summary": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "done: the answer for the user",
+      "title": "Summary"
+    },
+    "reason": {
+      "description": "one short sentence: why this action",
+      "title": "Reason",
+      "type": "string"
+    }
+  },
+  "required": [
+    "action",
+    "reason"
+  ],
+  "title": "Command",
+  "type": "object"
+}
