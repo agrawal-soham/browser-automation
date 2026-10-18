@@ -114,7 +114,7 @@ async def models():
                 "owned_by": "local",
                 "input_modalities": ["text", "image"],
                 # What Nanobrowser may send; the orchestrator trims to its own, smaller prompt (TEXT_NUM_CTX).
-                "context_length": 16384,
+                "context_length": settings.advertised_context,
                 "max_tokens": 4096,
             }
         ],

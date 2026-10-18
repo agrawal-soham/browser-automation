@@ -22,6 +22,10 @@ class Settings:
     text_model: str = os.environ.get("TEXT_MODEL", "qwen3:8b")
     # 8k: the compact prompt is ~2k tokens; at 16k qwen3:14b spilled further off an 8 GB GPU and a step took 8-114 s.
     num_ctx: int = int(os.environ.get("TEXT_NUM_CTX", "8192"))
+    # The context window /v1/models declares to Nanobrowser. Only the extension's bookkeeping uses it (the text model
+    # gets the server's own short prompt), but at 16384 a long run (Domino's, 60+ steps, 2026-10-18) stopped with
+    # "This conversation no longer fits the model's context": what the extension always keeps did not fit.
+    advertised_context: int = int(os.environ.get("ADVERTISED_CONTEXT", "65536"))
     text_timeout_s: float = float(os.environ.get("TEXT_TIMEOUT_S", "120"))
 
     # The VLM worker on Laptop B, over wss. Empty URL: run text-only.
