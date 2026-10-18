@@ -1,0 +1,16 @@
+node_modules
+dist
+dist-zip
+.output
+.wxt
+coverage
+.env
+.env.local
+.env.*.local
+.DS_Store
+.idea
+.vscode
+.cursor
+.nanobrowser
+# Measurement runs write raw data here
+fixtures/.results
