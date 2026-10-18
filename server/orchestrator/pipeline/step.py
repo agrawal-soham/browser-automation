@@ -8,11 +8,11 @@
      Before any of these looks after an action        -> the layer's `wait {settled}`: the page finishes loading first.
   3. The screenshot taken for a new page              -> VLM "perceive" over wss: a description of the page.
      The screenshot taken after an unsure action      -> VLM "after action": did it take effect, what changed, where.
-  4. qwen3:14b decides -> check -> (VLM verify if risky, on a fresh screenshot) -> on a problem, the note goes back
-     to qwen3:14b.
+  4. qwen3:8b decides -> check -> (VLM verify if risky, on a fresh screenshot) -> on a problem, the note goes back
+     to qwen3:8b.
      done "success" with an action after the latest outline -> snapshot first; the next request decides again.
      done "success" (vision on)                      -> the VLM checks the final screenshot: its no goes back to
-                                                        qwen3:14b; no answer turns the outcome into "partial".
+                                                        qwen3:8b; no answer turns the outcome into "partial".
   5. Still failing after the retries                  -> ask_user.
   Clicks that already failed on the same element go up the ladder in recover.py: vision check of the labelled
   screenshot, then the keyboard, then hand the step to the user. There is always an end.
@@ -28,9 +28,10 @@ from dataclasses import dataclass, field
 
 from ..command import Command, Point
 from ..config import Settings
+from ..memory import SiteMemory
 from ..prompt import decide_messages
 from ..text_model import TextModel, TextModelError
-from ..turn import REF, Turn
+from ..turn import CHOICES_INTENT, REF, Turn
 from ..vlm_link import VlmLink
 from .check import check
 from .grid import locate_on_grid
@@ -135,7 +136,9 @@ def ask(message: str, reason: str) -> Command:
     return Command(action="ask_user", message=message, reason=reason)
 
 
-async def run_step(turn: Turn, text: TextModel, link: VlmLink, settings: Settings) -> StepResult:
+async def run_step(
+    turn: Turn, text: TextModel, link: VlmLink, settings: Settings, memory: SiteMemory | None = None
+) -> StepResult:
     out = StepResult()
 
     refused = turn.refused_tag()
@@ -148,18 +151,27 @@ async def run_step(turn: Turn, text: TextModel, link: VlmLink, settings: Setting
         return out
 
     if turn.needs_snapshot():
-        out.own_call = observe(turn, settings, ("snapshot", {"intent": "Look at the page before acting"}))
+        act = turn.last_action_index()
+        opened = 0 <= turn.snapshot_at < act and turn.may_have_opened_choices(turn.steps[act])
+        intent = CHOICES_INTENT if opened else "Look at the page before acting"
+        out.own_call = observe(turn, settings, ("snapshot", {"intent": intent}))
         return out
 
+    # Site memory: the next step of a playbook that fits this task and page goes out without the text model or a page
+    # description (memory.py); it still passes check() below.
+    replay = await memory.next_step(turn) if memory and memory.enabled else None
+    replaying = bool(replay and replay.raw)
+
     # One screenshot per new outline, for the VLM; only when Nanobrowser offers the tool and Laptop B is there.
-    if turn.needs_screenshot() and link.connected:
+    if not replaying and turn.needs_screenshot() and link.connected:
         out.own_call = observe(turn, settings, PAGE_SHOT)
         return out
 
     # An action the outline cannot confirm gets a picture, once.
     act = turn.last_action_index()
     if (
-        settings.perceive in ("auto", "always")
+        not replaying
+        and settings.perceive in ("auto", "always")
         and link.connected
         and turn.can_screenshot
         and act >= 0
@@ -176,7 +188,7 @@ async def run_step(turn: Turn, text: TextModel, link: VlmLink, settings: Setting
         out.notes.append(settle)
 
     # Look only at a screenshot taken just now: an older one was already seen, and each VLM call costs seconds.
-    fresh = turn.image_b64 and link.connected and turn.screenshot_at == len(turn.steps) - 1
+    fresh = not replaying and turn.image_b64 and link.connected and turn.screenshot_at == len(turn.steps) - 1
     intent = shot_intent(turn) if fresh else ""
     if fresh and intent == AFTER_SHOT[1]["intent"] and act >= 0:
         action = turn.describe(turn.steps[act])
@@ -202,15 +214,32 @@ async def run_step(turn: Turn, text: TextModel, link: VlmLink, settings: Setting
     elif link.enabled and turn.can_screenshot and not link.connected:
         out.warnings.append("Text only: the link to the vision model on Laptop B is down")
 
+    hints = ""
+    if memory and memory.enabled:
+        memory.remember_perception(turn, out.perception)
+        if replay and replay.needs_perception and out.perception:
+            # A thin page: the description was needed to tell whether it is the page the playbook knows.
+            replay = await memory.next_step(turn, out.perception)
+        if replay and replay.raw:
+            out.notes.append(f"memory: replaying #{replay.playbook.id} step {replay.step}")
+        else:
+            if replay and replay.why:
+                out.timings["memory"] = replay.why
+            hints = await memory.hints(turn, replay.step if replay and replay.playbook and replay.step else 1)
+
     for attempt in range(settings.max_retries + 1):
         out.attempts = attempt + 1
-        messages = decide_messages(turn, out.perception, out.notes, settings.snapshot_chars)
-        try:
-            raw, stats = await text.decide(messages)
-        except TextModelError as e:
-            out.notes.append(str(e))
-            continue
-        out.timings[f"decide_{attempt + 1}"] = stats
+        if attempt == 0 and replay and replay.raw:
+            raw = dict(replay.raw)
+            out.timings["replay"] = {"playbook": replay.playbook.id, "step": replay.step}
+        else:
+            messages = decide_messages(turn, out.perception, out.notes, settings.snapshot_chars, hints)
+            try:
+                raw, stats = await text.decide(messages)
+            except TextModelError as e:
+                out.notes.append(str(e))
+                continue
+            out.timings[f"decide_{attempt + 1}"] = stats
         checked = check(raw, turn)
         if checked.command is None:
             out.notes.extend(checked.problems)
@@ -276,12 +305,15 @@ async def run_step(turn: Turn, text: TextModel, link: VlmLink, settings: Setting
             point = Command(
                 action="click",
                 point=Point(x=hit.x, y=hit.y),
-                reason=f"{checked.command.reason} (target: {target}; grid {hit.cell}, square {hit.sub})",
+                reason=f"{checked.command.reason} (target: {target}; {hit.where})",
             )
             started = time.monotonic()
             v = await verify(point, target, turn, link)
             out.timings[f"grid_check_{attempt + 1}_ms"] = int((time.monotonic() - started) * 1000)
-            out.grid = {"target": target, "cell": hit.cell, "square": hit.sub, "x": hit.x, "y": hit.y, "seen": hit.seen}
+            out.grid = {
+                "target": target, "how": hit.how, "cell": hit.cell, "square": hit.sub, "x": hit.x, "y": hit.y,
+                "seen": hit.seen,
+            }
             if v.ran and not v.ok:
                 out.verified = False
                 out.notes.append(f"The marker check says the spot found for {target} is wrong: {v.reason}")

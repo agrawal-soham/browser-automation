@@ -25,3 +25,5 @@
 **Changed (2026-10-18, IRCTC run).** `open_dialog()`: the last `dialog`/`alertdialog` of the outline, its refs and controls, and whether it blocks (modal or alert). `steps_on_page` restarts after an `ask_user`, so the failure budget resets when the user takes over. An `OBSCURED` error counts as unsure (a picture shows what covers the page).
 
 **Changed (2026-10-18, grid).** `failures_on` also counts a failed grid click (a point) whose intent names the element.
+
+**Changed (2026-10-18, dropdowns and dialogs).** `needs_snapshot` also asks for an outline after a click or typing on an element that opens a list of choices (`may_have_opened_choices`: a combobox, listbox, menu, searchbox or an element shown as collapsed/expanded), since its options are only in a new outline; that outline carries `CHOICES_INTENT`, so `needs_screenshot` does not treat it as a new page. `open_choices()` finds the open list and its option refs; `js_dialog_open()` reads a waiting alert/confirm/prompt from the last result.

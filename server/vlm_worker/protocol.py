@@ -10,7 +10,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-JobType = Literal["perceive", "verify", "chat"]
+# locate: the point of a described element on the screenshot (a grounding model such as UI-TARS), as fractions.
+JobType = Literal["perceive", "verify", "chat", "locate"]
 
 # One masked 1024 px PNG in base64 is well under this; the websockets library default of 1 MiB is too small.
 MAX_MESSAGE_BYTES = 8 * 1024 * 1024
@@ -24,6 +25,8 @@ class Auth(BaseModel):
 class AuthOk(BaseModel):
     type: Literal["auth_ok"] = "auth_ok"
     model: str
+    # Jobs beyond perceive/verify/chat the worker's model can do: "locate" once its coordinates were calibrated.
+    capabilities: list[str] = Field(default_factory=list)
 
 
 class Job(BaseModel):
@@ -41,7 +44,7 @@ class JobResult(BaseModel):
     type: Literal["result"] = "result"
     id: str
     ok: bool
-    # perceive -> Perception, verify -> Verdict, chat -> {"text": ...}
+    # perceive -> Perception, verify -> Verdict, chat -> {"text": ...}, locate -> Point (or {"text"} when not found)
     result: dict[str, Any] | None = None
     error: str | None = None
     ms: int = 0
@@ -60,3 +63,11 @@ class Perception(BaseModel):
 class Verdict(BaseModel):
     ok: bool
     reason: str
+
+
+class Point(BaseModel):
+    """Where a located element is: fractions of the image's width and height (0 to 1), and the model's own words."""
+
+    x: float
+    y: float
+    raw: str = ""

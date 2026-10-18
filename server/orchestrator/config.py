@@ -17,10 +17,10 @@ def _read(path: str) -> str:
 
 @dataclass(frozen=True)
 class Settings:
-    # The decider: qwen3:14b in Ollama on this laptop.
+    # The decider: qwen3:8b in Ollama on this laptop (qwen3:14b before 2026-10-18: it spilled off the 8 GB GPU).
     ollama_url: str = os.environ.get("OLLAMA_URL", "http://localhost:11434")
-    text_model: str = os.environ.get("TEXT_MODEL", "qwen3:14b")
-    # 8k: the compact prompt is ~2k tokens; at 16k qwen3:14b spills further off an 8 GB GPU and a step took 8-114 s.
+    text_model: str = os.environ.get("TEXT_MODEL", "qwen3:8b")
+    # 8k: the compact prompt is ~2k tokens; at 16k qwen3:14b spilled further off an 8 GB GPU and a step took 8-114 s.
     num_ctx: int = int(os.environ.get("TEXT_NUM_CTX", "8192"))
     text_timeout_s: float = float(os.environ.get("TEXT_TIMEOUT_S", "120"))
 
@@ -49,6 +49,15 @@ class Settings:
     max_retries: int = int(os.environ.get("MAX_RETRIES", "2"))
     # Snapshot text kept in the prompt, in characters (about 3k tokens).
     snapshot_chars: int = int(os.environ.get("SNAPSHOT_CHARS", "12000"))
+
+    # Site memory (orchestrator/memory.py). "replay": a known task on a known page repeats the steps that worked;
+    # "hints": they only go into the prompt; "off": nothing is kept or read.
+    site_memory: str = os.environ.get("SITE_MEMORY", "replay")
+    memory_dir: Path = Path(os.environ.get("MEMORY_DIR", Path(__file__).resolve().parent.parent / "memory"))
+    # How alike a page's element names must be (0-1) to the page a step was taken on, for that step to be replayed.
+    memory_match: float = float(os.environ.get("MEMORY_MATCH", "0.8"))
+    # The Ollama embedding model that ranks playbooks; empty or missing: word overlap does.
+    embed_model: str = os.environ.get("EMBED_MODEL", "nomic-embed-text")
 
     # Save each image the server receives (already masked by the extension) to logs/images/, for the demo and debugging.
     log_images: bool = _bool("LOG_IMAGES")

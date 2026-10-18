@@ -1,5 +1,5 @@
 """The server's first check of a command, before anything reaches the browser. Each problem becomes a short note that
-goes back to qwen3:14b for the retry. It also rates the risk of the action, which decides whether the VLM verifies it.
+goes back to qwen3:8b for the retry. It also rates the risk of the action, which decides whether the VLM verifies it.
 The extension checks again on its own side; this check only saves a round trip to the browser.
 """
 
@@ -68,6 +68,35 @@ def check(raw: dict, turn: Turn) -> Checked:
         problems.append(
             f"{cmd.ref} is behind the open dialog {dialog.line}. Answer or close the dialog first, with one of its "
             f"controls: {controls}."
+        )
+    if cmd.action == "dialog":
+        if not turn.js_dialog_open():
+            problems.append(
+                "No browser dialog (alert, confirm, prompt) is waiting. A dialog in the page outline is part of the "
+                "page: click its button instead."
+            )
+        elif cmd.accept is None:
+            problems.append('dialog needs "accept": true for OK or Accept, false for Cancel or Dismiss.')
+    elif turn.js_dialog_open() and cmd.action not in ("ask_user", "done"):
+        problems.append(
+            "A browser dialog is waiting for an answer and the page cannot be used until it has one. Answer with "
+            'action "dialog" and "accept" true or false.'
+        )
+    choices = turn.open_choices()
+    act = turn.last_action_index()
+    if (
+        choices
+        and act >= 0
+        and turn.steps[act].name in ("set", "type")
+        and turn.may_have_opened_choices(turn.steps[act])
+        and cmd.action in ("click", "type")
+        and not (cmd.action == "click" and cmd.ref and any(f"[{cmd.ref}]" in o for o in choices.options))
+    ):
+        # Typing into a field that suggests opens a list; the field is not filled until a suggestion is chosen
+        # (IRCTC's From station, 2026-10-18).
+        problems.append(
+            f"Typing opened a list of choices ({choices.line}). Click the option that matches the request first: "
+            + "; ".join(choices.options[:8])
         )
     if cmd.action == "type" and cmd.ref and NAME_BOX.search(element_line(turn, cmd.ref)):
         # Google Sheets draws its cells on a canvas: the Name Box is the only field near "A1" in the outline, and a run

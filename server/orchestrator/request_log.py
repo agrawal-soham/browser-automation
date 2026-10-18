@@ -26,7 +26,7 @@ class RequestLog:
     def save_image(self, image_b64: str) -> str:
         """Writes one received image once, named by its hash; returns the file name."""
         data = base64.b64decode(image_b64)
-        name = hashlib.sha256(data).hexdigest()[:16] + ".png"
+        name = hashlib.sha256(data).hexdigest()[:16] + (".jpg" if data[:3] == b"\xff\xd8\xff" else ".png")
         folder = self.directory / "images"
         folder.mkdir(exist_ok=True)
         if not (folder / name).exists():

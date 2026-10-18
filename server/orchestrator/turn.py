@@ -44,6 +44,19 @@ LABELLED_SHOT = re.compile(r"screenshot · .* · \d+ labels")
 
 # A dialog line of the outline: `dialog "Alert" (modal)`, with or without a ref; its content is indented under it.
 DIALOG_LINE = re.compile(r'^(\s*)(?:\[[^\]]+\]\s+)?(dialog|alertdialog)\b(.*)$')
+# An element that opens a list of choices when clicked or typed into: a select or a field that suggests (combobox), a
+# list, a menu, or a button that shows whether its popup is open. What it opens is only in a new outline: the IRCTC run
+# of 2026-10-18 typed "Lucknow" into the From field and then acted on the old outline, which had no suggestions.
+POPUP_OWNER = re.compile(
+    r"^\[[^\]]+\]\s+(?:combobox|listbox|menu|menuitem|searchbox)\b|^\[[^\]]+\]\s+\S+.*\((?:collapsed|expanded)\)"
+)
+# An open list of choices in the outline (an expanded combobox, a menu, a list that is not collapsed) and its options.
+CHOICES_LINE = re.compile(r"^(\s*)(?:\[[^\]]+\]\s+)?(listbox|menu|tree|combobox)\b(.*)$")
+CHOICE = re.compile(r"^\s*\[[^\]]+\]\s+(?:option|menuitem|menuitemradio|menuitemcheckbox|treeitem)\b")
+# The intent of the outline the server takes after an action that opened a list: not a new page, so no page picture.
+CHOICES_INTENT = "Look at the choices that opened"
+# A JavaScript dialog (alert, confirm, prompt) is open: the page waits until it is accepted or dismissed.
+JS_DIALOG = re.compile(r"\bMODAL_PENDING\b|A dialog opened \((?:alert|confirm|prompt|beforeunload)\b")
 
 
 @dataclass
@@ -55,6 +68,14 @@ class Dialog:
     controls: list[str]
     # A modal dialog or an alert dialog blocks the page behind it.
     blocking: bool
+
+
+@dataclass
+class Choices:
+    """A list of choices open on the page, from the outline: its line and the lines of its options (with refs)."""
+
+    line: str
+    options: list[str]
 
 
 @dataclass
@@ -81,6 +102,8 @@ class Turn:
     snapshot: str = ""
     # Index in `steps` of the latest snapshot; -1 when there is none.
     snapshot_at: int = -1
+    # The first step of the current request: the steps before it belong to earlier requests of the chat.
+    request_start: int = 0
     # Index in `steps` of the latest screenshot; -1 when there is none.
     screenshot_at: int = -1
     # Whether the latest screenshot has the red ref labels drawn on it.
@@ -115,6 +138,8 @@ class Turn:
         if last.name in ("navigate", "ask_user") and self.snapshot_at < at:
             # A new page, or the user may have changed the page while the agent waited.
             return True
+        if self.snapshot_at < at and self.may_have_opened_choices(last):
+            return True
         return bool(STALE.search(last.result)) and last.name != "snapshot"
 
     @property
@@ -123,8 +148,50 @@ class Turn:
         return "screenshot" in self.tools
 
     def needs_screenshot(self) -> bool:
-        """A new page outline has no screenshot after it yet."""
-        return self.can_screenshot and self.screenshot_at < self.snapshot_at
+        """A new page outline has no screenshot after it yet. An outline of the choices an action opened is the same
+        page: the after-action rules decide whether it needs a picture."""
+        if not (self.can_screenshot and self.screenshot_at < self.snapshot_at):
+            return False
+        try:
+            intent = json.loads(self.steps[self.snapshot_at].args or "{}").get("intent", "")
+        except (json.JSONDecodeError, AttributeError):
+            intent = ""
+        return intent != CHOICES_INTENT
+
+    def may_have_opened_choices(self, step: Step) -> bool:
+        """A click or typing on an element that opens a list of choices (a select, a field that suggests, a menu)
+        that went through: its options are not in the outline taken before it."""
+        if step.name not in ACTIONS or self.failed(step) or STALE.search(step.result):
+            return False
+        try:
+            target = json.loads(step.args or "{}").get("target") or {}
+        except (json.JSONDecodeError, AttributeError):
+            return False
+        ref = target.get("ref") if isinstance(target, dict) else None
+        return bool(ref and POPUP_OWNER.search(self.outline_line(ref)))
+
+    def open_choices(self) -> Choices | None:
+        """The list of choices the latest outline shows open (the last one in the outline), if any."""
+        lines = self.snapshot.splitlines()
+        found = None
+        for i, line in enumerate(lines):
+            m = CHOICES_LINE.match(line)
+            if not m or "(collapsed)" in m.group(3) or (m.group(2) == "combobox" and "(expanded)" not in m.group(3)):
+                continue
+            indent = len(m.group(1))
+            options = []
+            for child in lines[i + 1 :]:
+                if child.strip() and len(child) - len(child.lstrip()) <= indent:
+                    break
+                if CHOICE.match(child):
+                    options.append(child.strip())
+            if options:
+                found = Choices(line.strip(), options)
+        return found
+
+    def js_dialog_open(self) -> bool:
+        """The last result says a JavaScript dialog (alert, confirm, prompt) is waiting for an answer."""
+        return bool(self.last and JS_DIALOG.search(self.last.result))
 
     def screenshot_is_stale(self) -> bool:
         """Something was done on the page after the latest screenshot (a verify would look at an old picture)."""
@@ -365,7 +432,10 @@ def parse(body: dict) -> Turn:
             images = _images(content)
             if images:
                 turn.image_b64 = images[-1]
-            turn.requests.extend(_request_parts(content))
+            parts = _request_parts(content)
+            if parts:
+                turn.request_start = len(turn.steps)
+            turn.requests.extend(parts)
             if first_user and plain:
                 turn.task = plain
                 first_user = False

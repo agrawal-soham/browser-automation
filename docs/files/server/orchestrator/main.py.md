@@ -15,3 +15,6 @@
 **Added (2026-10-18).** `GET /health/vlm`: sends a PNG with a random number over the wss link and checks that the VLM reads it back (`correct`, `ms`, `worker_ms`, the error when it fails).
 
 **Changed (2026-10-18).** The log entry has `grid` for a click found on the grid.
+
+**Changed (2026-10-18).** Creates the `SiteMemory`; a verified `done success` is recorded as a playbook
+(`entry["memory"]` in the request log).

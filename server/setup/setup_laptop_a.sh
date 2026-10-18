@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-time setup of Laptop A (Ubuntu): the orchestrator, qwen3:14b and the Nanobrowser fork. Safe to run again after
+# One-time setup of Laptop A (Ubuntu): the orchestrator, qwen3:8b and the Nanobrowser fork. Safe to run again after
 # a git pull.
 #
 #   server/setup/setup_laptop_a.sh --laptop-b-ip 192.168.1.20 [--skip-model] [--skip-client]
@@ -12,7 +12,7 @@ set -euo pipefail
 B_IP=""
 SKIP_MODEL=0
 SKIP_CLIENT=0
-TEXT_MODEL="${TEXT_MODEL:-qwen3:14b}"
+TEXT_MODEL="${TEXT_MODEL:-qwen3:8b}"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --laptop-b-ip) B_IP="$2"; shift 2 ;;

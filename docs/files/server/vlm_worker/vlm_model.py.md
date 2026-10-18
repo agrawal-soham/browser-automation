@@ -9,3 +9,5 @@
 **Used by.** worker.py
 
 **Notes and limits.** Env: OLLAMA_URL, VLM_MODEL (qwen2.5vl:7b), VLM_NUM_CTX (8192).
+
+**Changed (2026-10-18).** Default model UI-TARS-1.5-7B. `locate` jobs and the start-up `calibrate()` (grounding.py); `VLM_COORDS` overrides.

@@ -78,6 +78,8 @@ export interface LoopOptions {
   takeSteering?: () => string[];
   /** Makes a small thumbnail of a screenshot for the activity block; none when absent. */
   thumbnail?: (base64: string, mimeType: string) => Promise<string | undefined>;
+  /** Re-encodes a screenshot before it goes to the model (smaller JPEG); the original when absent or it fails. */
+  modelImage?: (base64: string, mimeType: string) => Promise<{ data: string; mediaType: string } | undefined>;
   /** Runs an agent tool (read_attachment, save_file); `done` is the loop's own. */
   agentTool?: (
     call: ToolCallRequest,
@@ -533,7 +535,7 @@ export class AgentLoop {
       if (verdict.nudge) notes.push(note(verdict.nudge));
       if (verdict.stop) this.#guardStop ??= { reason: verdict.stop, guard: verdict.guard ?? 'errors' };
     }
-    const image = await this.#withThumb(this.#screenshotImage(outcome));
+    const image = await this.#withThumb(await this.#reencoded(this.#screenshotImage(outcome)));
     const text = cutText(outcome.text, RESULT_CAP, `… the result was cut at ${RESULT_CAP} characters.`);
     // A nudge is the extension's own line on the result that caused it, outside any boundary.
     return { ...outcome, ...(image ? { image } : {}), text: [text, ...notes].join('\n') };
@@ -699,6 +701,12 @@ export class AgentLoop {
     const data = outcome.result?.data as { base64?: string; mimeType?: string } | undefined;
     if (!outcome.result?.ok || !data?.base64) return undefined;
     return { data: data.base64, mediaType: data.mimeType ?? 'image/png', note: PAGE_IMAGE_LINE };
+  }
+
+  async #reencoded(image: CallOutcome['image'] | undefined): Promise<CallOutcome['image'] | undefined> {
+    if (!image || !this.options.modelImage) return image;
+    const smaller = await this.options.modelImage(image.data, image.mediaType).catch(() => undefined);
+    return smaller ? { ...image, ...smaller } : image;
   }
 
   async #withThumb(image: CallOutcome['image'] | undefined): Promise<CallOutcome['image'] | undefined> {

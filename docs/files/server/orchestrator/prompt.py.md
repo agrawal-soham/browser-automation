@@ -15,3 +15,5 @@
 **Changed (2026-10-18).** An after-action check is shown as "WHAT THE SCREEN SHOWS AFTER YOUR LAST ACTION".
 
 **Changed (2026-10-18, IRCTC run).** "A DIALOG IS OPEN ON TOP OF THE PAGE" with its controls, and "YOUR LAST ACTION WAS BLOCKED" after an `OBSCURED` error.
+
+**Changed (2026-10-18, dropdowns and dialogs).** Adds "A LIST OF CHOICES IS OPEN" with the option refs, and "A BROWSER DIALOG IS WAITING" with the browser's report. `decide.txt` describes the `dialog` action and how to choose from selects, fields that suggest and dropdown menus.

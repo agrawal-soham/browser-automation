@@ -16,9 +16,9 @@ from vlm_worker.worker import Worker, tls_context
 
 pytestmark = pytest.mark.skipif(not shutil.which("openssl"), reason="openssl is needed to make a test certificate")
 
-
 class FakeVlm:
     name = "fake-vl"
+    capabilities: list = []
 
     async def run(self, job):
         await asyncio.sleep(0.01)

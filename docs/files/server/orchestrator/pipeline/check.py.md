@@ -21,3 +21,5 @@
 **Changed (2026-10-18, IRCTC run).** A click or type on a ref behind an open modal or alert dialog is refused, with the dialog's controls named.
 
 **Changed (2026-10-18, grid).** A click needs a ref or a `visual`; coordinates from the model are refused (points come from the grid).
+
+**Changed (2026-10-18, dropdowns and dialogs).** After typing into a field that opened a list of choices, a click or type elsewhere is refused until an option is clicked (the IRCTC From station). A waiting browser dialog must be answered with `dialog`; `dialog` without one is refused.

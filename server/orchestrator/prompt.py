@@ -1,4 +1,4 @@
-"""Builds the compact prompt for qwen3:14b from a Turn: the task, the screen description from the VLM, the trimmed page
+"""Builds the compact prompt for qwen3:8b from a Turn: the task, the screen description from the VLM, the trimmed page
 outline, the last few results and any failure notes from earlier attempts at this step. Nanobrowser's own system prompt
 and tool schemas are never forwarded; the command schema goes to Ollama as `format` instead.
 """
@@ -22,7 +22,9 @@ def _trim(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[:limit] + f"\n… ({len(text) - limit} more characters cut)"
 
 
-def decide_messages(turn: Turn, perception: dict | None, notes: list[str], snapshot_chars: int) -> list[dict]:
+def decide_messages(
+    turn: Turn, perception: dict | None, notes: list[str], snapshot_chars: int, hints: str = ""
+) -> list[dict]:
     parts = []
     if turn.earlier_requests:
         parts.append(
@@ -51,6 +53,20 @@ def decide_messages(turn: Turn, perception: dict | None, notes: list[str], snaps
             + "Answer it first: choose the control the request needs, or close it. Its title is not a button. "
             + ("The page behind it cannot be used until it is gone." if dialog.blocking else "")
         )
+    choices = turn.open_choices()
+    if choices:
+        parts.append(
+            f"A LIST OF CHOICES IS OPEN: {choices.line}\nIts options:\n"
+            + "\n".join(f"- {o}" for o in choices.options[:20])
+            + ("\n… more options in the outline" if len(choices.options) > 20 else "")
+            + "\nTo choose, click the option the request needs (its ref)."
+        )
+    if turn.js_dialog_open():
+        parts.append(
+            "A BROWSER DIALOG IS WAITING (alert, confirm or prompt). The page cannot be used until it is answered: "
+            'action "dialog" with "accept" true (OK) or false (Cancel).\n'
+            f"The browser reported: {turn.last.result.splitlines()[0][:300] if turn.last and turn.last.result else ''}"
+        )
     covered = turn.last and re.search(r"covered by ([^\n]*?) at its click point", turn.last.result)
     if covered:
         parts.append(
@@ -69,6 +85,11 @@ def decide_messages(turn: Turn, perception: dict | None, notes: list[str], snaps
     if recent:
         lines = [f"- {s.name} {s.args}\n  → {_trim(s.result, RESULT_CHARS)}" for s in recent]
         parts.append("ACTIONS SINCE THE OUTLINE, OLDEST FIRST:\n" + "\n".join(lines))
+    if hints:
+        parts.append(
+            "BEFORE ON THIS SITE (it worked then; the page may have changed, so use refs from the outline above, not "
+            "these names blindly):\n" + hints
+        )
     if notes:
         parts.append(
             "YOUR EARLIER ANSWERS FOR THIS STEP WERE REJECTED:\n"

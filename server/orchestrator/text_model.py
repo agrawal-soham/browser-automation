@@ -1,4 +1,4 @@
-"""The client for qwen3:14b in Ollama (Laptop A). Thinking is off (it costs seconds per step), output is constrained to
+"""The client for qwen3:8b in Ollama (Laptop A). Thinking is off (it costs seconds per step), output is constrained to
 the command schema, and the temperature is 0 so the same page gives the same answer.
 """
 

@@ -32,6 +32,9 @@ def to_tool_call(cmd: Command) -> tuple[str, dict]:
         return "scroll", {"by": {"pages": -1 if cmd.direction == "up" else 1}, **intent}
     if cmd.action == "press":
         return "press", {"keys": cmd.keys or "Enter", **({"target": target} if target else {}), **intent}
+    if cmd.action == "dialog":
+        # The page's JavaScript dialog (alert, confirm, prompt); a prompt gets the typed value.
+        return "handle_dialog", {"accept": bool(cmd.accept), **({"promptText": cmd.value} if cmd.value else {}), **intent}
     if cmd.action == "ask_user":
         return "ask_user", {"message": cmd.message or "", "kind": cmd.ask_kind}
     return "done", {"outcome": cmd.outcome or "partial", "summary": cmd.summary or cmd.reason}

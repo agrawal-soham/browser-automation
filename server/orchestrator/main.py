@@ -2,8 +2,8 @@
 
 Each request is sorted (turn.classify) and answered:
   probe      -> report_status {"status": "ok"} at once, so the provider passes Nanobrowser's tool-calling test,
-  done_only  -> qwen3:14b writes the summary, returned as a `done` call,
-  chat       -> text from qwen3:14b, or from the VLM when the request carries an image (the image probe),
+  done_only  -> qwen3:8b writes the summary, returned as a `done` call,
+  chat       -> text from qwen3:8b, or from the VLM when the request carries an image (the image probe),
   agent      -> the step pipeline (pipeline/step.py).
 
 Run:  uvicorn orchestrator.main:app --host 0.0.0.0 --port 8000
@@ -28,6 +28,7 @@ from . import formatter
 from .command import Command
 from .config import settings
 from .pipeline.step import run_step
+from .memory import SiteMemory
 from .request_log import RequestLog
 from .text_model import TextModel, TextModelError
 from .turn import parse
@@ -42,6 +43,7 @@ async def lifespan(app: FastAPI):
     app.state.text = TextModel(settings)
     app.state.link = VlmLink(settings)
     app.state.log = RequestLog(settings.log_dir)
+    app.state.memory = SiteMemory(settings)
     app.state.link.start()
     yield
     await app.state.link.stop()
@@ -125,7 +127,9 @@ async def models():
 HEARTBEAT_S = 5
 
 
-async def answer(turn, text: TextModel, link: VlmLink, entry: dict) -> tuple[str | None, dict | None, str, dict | None]:
+async def answer(
+    turn, text: TextModel, link: VlmLink, entry: dict, memory: SiteMemory | None = None
+) -> tuple[str | None, dict | None, str, dict | None]:
     """The reply to one request: (tool name or None for text, its arguments, text, usage)."""
     if turn.kind == "probe":
         entry["reply"] = "report_status"
@@ -154,7 +158,7 @@ async def answer(turn, text: TextModel, link: VlmLink, entry: dict) -> tuple[str
         entry["reply"] = {"done": args}
         return "done", args, "", stats
 
-    result = await run_step(turn, text, link, settings)
+    result = await run_step(turn, text, link, settings, memory)
     if result.own_call:
         name, args = result.own_call
     else:
@@ -166,19 +170,31 @@ async def answer(turn, text: TextModel, link: VlmLink, entry: dict) -> tuple[str
         verified=result.verified, advisory=result.advisory, warnings=result.warnings, grid=result.grid,
         timings=result.timings,
     )
+    if memory and name == "done" and args.get("outcome") == "success" and result.verified:
+        # Only a success the vision model confirmed on the final screenshot becomes a playbook.
+        book = await memory.record(turn)
+        if book:
+            entry["memory"] = f"kept as playbook #{book.id} ({len(book.steps)} steps)"
     usage = next((v for k, v in result.timings.items() if k.startswith("decide_")), None)
     return name, args, "", usage
 
 
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request):
-    body = await request.json()
+    # How long the body takes to arrive after its headers: the upload time, which a tunnel can make long.
+    received = time.monotonic()
+    raw = await request.body()
+    upload_ms = int((time.monotonic() - received) * 1000)
+    body = json.loads(raw)
     turn = parse(body)
     text: TextModel = request.app.state.text
     link: VlmLink = request.app.state.link
     log: RequestLog = request.app.state.log
     entry: dict = {
         "kind": turn.kind,
+        "body_kb": len(raw) // 1024,
+        "upload_ms": upload_ms,
+        "via_tunnel": "cf-ray" in request.headers,
         "redaction": request.headers.get("x-redaction-scheme"),
         "task": turn.task[:300],
         "earlier_requests": [r[:120] for r in turn.earlier_requests],
@@ -194,7 +210,7 @@ async def chat_completions(request: Request):
 
     if not turn.stream:
         try:
-            name, args, said, usage = await answer(turn, text, link, entry)
+            name, args, said, usage = await answer(turn, text, link, entry, request.app.state.memory)
             return reply(False, name, args, said, usage)
         except TextModelError as e:
             entry["error"] = str(e)
@@ -204,7 +220,7 @@ async def chat_completions(request: Request):
 
     async def events():
         started = time.monotonic()
-        work = asyncio.create_task(answer(turn, text, link, entry))
+        work = asyncio.create_task(answer(turn, text, link, entry, request.app.state.memory))
         try:
             while True:
                 done, _ = await asyncio.wait({work}, timeout=HEARTBEAT_S)

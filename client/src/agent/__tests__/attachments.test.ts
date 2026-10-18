@@ -7,6 +7,7 @@ import { closeDb } from '@src/store/db';
 import type { MessagePart } from '@src/store/types';
 import { ATTACHED_IMAGE_LINE, attachmentKind, attachmentParts, inlineBudget, readAttachment } from '../attachments';
 import { AgentLoop } from '../loop';
+import type { LoopOptions } from '../loop';
 import { toolsForRun } from '../tools';
 import { FakeHost, FakeLayer } from '../testing/fake-layer';
 
@@ -149,7 +150,7 @@ describe('the loop adds the newest message’s files once', () => {
 });
 
 describe('the model’s own screenshot', () => {
-  async function run(vision: boolean) {
+  async function run(vision: boolean, modelImage?: LoopOptions['modelImage']) {
     const c = await createConversation({ mode: 'ask' });
     await appendEntry(c.id, {
       type: 'message',
@@ -183,6 +184,7 @@ describe('the model’s own screenshot', () => {
       emit: () => undefined,
       turnCap: 5,
       thumbnail: async () => 'data:image/jpeg;base64,THUMB',
+      modelImage,
     });
     await loop.run();
     return { scripted, branch: await activeBranch(c.id) };
@@ -200,5 +202,14 @@ describe('the model’s own screenshot', () => {
     const { toDisplay } = await import('../display');
     const rows = toDisplay(branch).flatMap(e => (e.kind === 'assistant' ? e.tools : []));
     expect(rows.find(r => r.tool === 'screenshot')?.thumbnail).toBe('data:image/jpeg;base64,THUMB');
+  });
+
+  it('goes to the model re-encoded when the run has an encoder, and as taken when it fails', async () => {
+    const jpeg = await run(true, async () => ({ data: '/9j/JPEG', mediaType: 'image/jpeg' }));
+    const sent = JSON.stringify(jpeg.scripted.calls[1].prompt);
+    expect(sent).toContain('/9j/JPEG');
+    expect(sent).not.toContain('iVBORw==');
+    const failed = await run(true, async () => undefined);
+    expect(JSON.stringify(failed.scripted.calls[1].prompt)).toContain('iVBORw==');
   });
 });

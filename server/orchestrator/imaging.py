@@ -43,6 +43,11 @@ def _open(image_b64: str) -> Image.Image:
     return Image.open(io.BytesIO(base64.b64decode(image_b64))).convert("RGB")
 
 
+def image_size(image_b64: str) -> tuple[int, int]:
+    """Width and height of an image in pixels."""
+    return _open(image_b64).size
+
+
 def _encode(img: Image.Image) -> str:
     out = io.BytesIO()
     img.save(out, format="PNG")
