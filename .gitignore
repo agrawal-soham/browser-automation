@@ -1,0 +1,49 @@
+# Dependencies
+node_modules/
+*/node_modules/
+pnpm-debug.log*
+
+# Build outputs
+dist/
+dist-zip/
+*/dist/
+.output/
+.wxt/
+coverage/
+
+# Python
+__pycache__/
+*/__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+ENV/
+.pytest_cache/
+
+# Runtime / Session Logs
+*.log
+logs/
+server/logs/
+server/logging_proxy/logs/
+
+# Test & Fixture artifacts
+fixtures/.results/
+.nanobrowser/
+
+# Environment and secrets
+.env
+.env.local
+.env.*.local
+*.pem
+
+# Editor & OS files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+.cursor/
+.claude/
