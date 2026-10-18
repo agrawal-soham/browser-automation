@@ -188,6 +188,14 @@ REPEATS = re.compile(r"\b(\d+|two|three|four|five|twice|times|each|every|all|aga
 CHANGED = re.compile(r"effect:\s*changed", re.I)
 
 
+def _args(step) -> dict:
+    try:
+        args = json.loads(step.args or "{}")
+    except json.JSONDecodeError:
+        return {}
+    return args if isinstance(args, dict) else {}
+
+
 def repeated(cmd: Command, turn: Turn) -> str | None:
     """A note when the command only repeats what is already done: the page it would open is open, or the last action
     was this same navigate or the same value into the same field (the cause of the six-navigate loop on Google Forms)."""
@@ -203,12 +211,17 @@ def repeated(cmd: Command, turn: Turn) -> str | None:
         return None
     if cmd.action == "navigate" and last.name == "navigate" and _same_url(cmd.url or "", args.get("url", "")):
         return "You just opened this same address and the page is the result. Answer done, or act on the page."
-    if cmd.action in ("click", "press") and cmd.ref and last.name in ("click", "press") and not REPEATS.search(turn.task):
+    acted = next((s for s in reversed(turn.steps) if s.name in ("click", "press", "set", "type", "navigate")), None)
+    if cmd.action in ("click", "press") and cmd.ref and acted is not None and acted.name in ("click", "press") \
+            and not REPEATS.search(turn.task):
+        # Looks past questions to the user: after "I could not find a safe next step" (B1 run, 2026-10-18) the next
+        # click on the button that already worked pressed it a second time.
         # The press that worked is not pressed again: on the covered-button fixture (2026-10-18) qwen3:8b clicked
         # "Add question" again after the keyboard fallback had added the question, and each click became one more.
-        target = args.get("target") if isinstance(args.get("target"), dict) else {}
-        same_page = not re.search(r"navigation: |new document|URL →", last.result)
-        if target.get("ref") == cmd.ref and same_page and not Turn.failed(last) and CHANGED.search(last.result):
+        pressed = _args(acted).get("target")
+        pressed_ref = pressed.get("ref") if isinstance(pressed, dict) else None
+        same_page = not re.search(r"navigation: |new document|URL →", acted.result)
+        if pressed_ref == cmd.ref and same_page and not Turn.failed(acted) and CHANGED.search(acted.result):
             return (f"You just activated {turn.element_label(cmd.ref)} and the page changed. The request does not ask "
                     "for it more than once: check the outline, and answer done if the request is done.")
     if cmd.action == "type" and last.name in ("set", "type"):

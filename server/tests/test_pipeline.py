@@ -714,5 +714,9 @@ def test_a_press_that_worked_is_not_repeated():
     turn = parse(agent_body([("snapshot", {}, FORM), pressed], task="Click the Add question button once."))
     again = check({"action": "click", "ref": "bo46", "reason": "r"}, turn)
     assert again.command is None and "answer done" in again.problems[0]
+    # A question to the user in between does not reset it (B1 run, 2026-10-18).
+    asked = ("ask_user", {"message": "What next?"}, "the user answered: continue")
+    after_ask = parse(agent_body([("snapshot", {}, FORM), pressed, asked, ("snapshot", {}, FORM)], task="Click the Add question button once."))
+    assert check({"action": "click", "ref": "bo46", "reason": "r"}, after_ask).command is None
     many = parse(agent_body([("snapshot", {}, FORM), pressed], task="Click the Add question button 3 times."))
     assert check({"action": "click", "ref": "bo46", "reason": "r"}, many).command
