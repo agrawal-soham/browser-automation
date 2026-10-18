@@ -225,10 +225,10 @@ def test_perceive_every_new_page_or_only_thin_outlines():
 
     rich = parse(agent_body([("snapshot", {}, OUTLINE * 3)]))
     thin = parse(agent_body([("snapshot", {}, "[e1] heading «Canvas app»")]))
-    # Default: every new page is described (Google pages have hundreds of refs and were never looked at).
-    assert wants_perception(rich, Settings()) and wants_perception(thin, Settings())
-    old = Settings(perceive="thin")
-    assert not wants_perception(rich, old) and wants_perception(thin, old)
+    # Default: only a thin outline is described (each look cost 28-40 s on Laptop B, 2026-10-18).
+    assert not wants_perception(rich, Settings()) and wants_perception(thin, Settings())
+    every = Settings(perceive="auto")
+    assert wants_perception(rich, every) and wants_perception(thin, every)
     assert not wants_perception(thin, Settings(perceive="never"))
 
 
@@ -307,7 +307,7 @@ def run(body, answers, link):
     from orchestrator.config import Settings
     from orchestrator.pipeline.step import run_step
 
-    return aio.run(run_step(parse(body), FakeText(answers), link, Settings()))
+    return aio.run(run_step(parse(body), FakeText(answers), link, Settings(perceive="auto")))
 
 
 CLICK_ADD = {"action": "click", "ref": "bo46", "reason": "add a question"}
@@ -480,7 +480,7 @@ def test_a_picture_only_where_the_outline_cannot_confirm():
     link = FakeLink('{"took_effect": "no", "changed": "nothing new", "where": "the toolbar"}')
     text = FakeText([{"action": "click", "ref": "bo46", "reason": "r"}])
     after = form_body(clicked + [("screenshot", AFTER_SHOT[1], SHOT)])
-    r = aio.run(run_step(parse(after), text, link, Settings()))
+    r = aio.run(run_step(parse(after), text, link, Settings(perceive="auto")))
     assert link.jobs[0][0] == "chat" and 'click on button "Add question"' in link.jobs[0][1]
     assert r.perception["took_effect"] == "no"
     assert "AFTER YOUR LAST ACTION" in text.calls[0][1]["content"]
@@ -766,4 +766,4 @@ def test_pictures_for_looking_are_shrunk_to_jpeg():
     big = __import__("io").BytesIO()
     __import__("PIL.Image").Image.new("RGB", (2560, 1600), "white").save(big, format="PNG")
     small = shrink(base64.b64encode(big.getvalue()).decode())
-    assert image_size(small) == (1280, 800) and base64.b64decode(small)[:3] == b"\xff\xd8\xff"
+    assert image_size(small) == (1024, 640) and base64.b64decode(small)[:3] == b"\xff\xd8\xff"

@@ -164,7 +164,7 @@ async def run_step(
     replaying = bool(replay and replay.raw)
 
     # One screenshot per new outline, for the VLM; only when Nanobrowser offers the tool and Laptop B is there.
-    if not replaying and turn.needs_screenshot() and link.connected:
+    if not replaying and turn.needs_screenshot() and link.connected and wants_perception(turn, settings):
         out.own_call = observe(turn, settings, PAGE_SHOT)
         return out
 

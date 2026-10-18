@@ -43,7 +43,7 @@ def _open(image_b64: str) -> Image.Image:
     return Image.open(io.BytesIO(base64.b64decode(image_b64))).convert("RGB")
 
 
-def shrink(image_b64: str, max_side: int = 1280, quality: int = 85) -> str:
+def shrink(image_b64: str, max_side: int = 1024, quality: int = 85) -> str:
     """The screenshot as JPEG with its longer side at most `max_side`: fewer image tokens for the VLM, so a page
     description takes seconds less. Only for looking: clicks by position use the full image and its scale."""
     img = _open(image_b64)
