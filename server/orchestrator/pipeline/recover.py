@@ -61,6 +61,13 @@ def parse_location(text: str) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
+def _intent(step) -> str:
+    try:
+        return str(json.loads(step.args or "{}").get("intent", ""))
+    except (json.JSONDecodeError, AttributeError):
+        return ""
+
+
 def takeover(label: str, tries: int, why: str) -> Command:
     return Command(
         action="ask_user",
@@ -82,10 +89,13 @@ async def recover(cmd: Command, turn: Turn, link: VlmLink, screenshot_call: tupl
     label = turn.element_label(cmd.ref)
     line = turn.outline_line(cmd.ref)[:160]
     failures = turn.failures_on(label)
-    n = len(failures)
+    # A click the vision check already moved to another ref counts as a try: on YouTube (2026-10-18) the check named the
+    # wrong element five times running, because each new attempt started the ladder at the vision rung again.
+    moved = [s for s in turn.steps_on_page() if f"The vision check found {label} at" in str(_intent(s))]
+    n = len(failures) + len(moved)
     if n == 0:
         return None
-    last_error = re.search(r"\berror ([A-Z_]{3,})", failures[-1].result)
+    last_error = re.search(r"\berror ([A-Z_]{3,})", failures[-1].result) if failures else None
     why = last_error.group(1).lower().replace("_", " ") if last_error else "no effect"
 
     if n >= MAX_TRIES_PER_ELEMENT:

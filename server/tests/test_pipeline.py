@@ -733,3 +733,37 @@ def test_no_going_back_to_the_start_page_of_the_open_site():
     # Another page of the site, or another site, is still allowed.
     assert check({"action": "navigate", "url": "https://www.dominos.co.in/cart", "reason": "r"}, turn).command
     assert check({"action": "navigate", "url": "https://www.youtube.com", "reason": "r"}, turn).command
+
+
+def test_the_vision_rung_runs_once_per_element():
+    import asyncio as aio
+
+    from orchestrator.pipeline.recover import recover
+
+    failed = ("click", {"target": {"ref": "bo46"}}, COVERED)
+    moved = ("click", {"target": {"ref": "bo52"}, "intent": 'The vision check found button "Add question" at bo52'},
+             "click · dispatched; effect: changed")
+    turn = parse(agent_body([("snapshot", {}, FORM), failed, moved]))
+    rec = aio.run(recover(Command(action="click", ref="bo46", reason="r"), turn, FakeLink("{}"), ("screenshot", {})))
+    # Not the vision check again (YouTube, 2026-10-18): the next rung.
+    assert rec.own_call is None and rec.command is not None and "vision check found" not in rec.command.reason
+    assert rec.command.action == "press" or rec.command.visual
+
+
+def test_a_click_the_page_reacted_to_needs_no_picture():
+    turn = parse(agent_body([("snapshot", {}, FORM * 3)]))
+    reacted = parse(agent_body([("snapshot", {}, FORM * 3), ("click", {"target": {"ref": "bo46"}}, "click · dispatched; effect: changed · 3 mutations")]))
+    assert not reacted.unsure(reacted.steps[-1], 8)
+    silent = parse(agent_body([("snapshot", {}, FORM * 3), ("click", {"target": {"ref": "bo46"}}, "click · dispatched")]))
+    assert silent.unsure(silent.steps[-1], 8) and turn
+
+
+def test_pictures_for_looking_are_shrunk_to_jpeg():
+    import base64
+
+    from orchestrator.imaging import image_size, shrink
+
+    big = __import__("io").BytesIO()
+    __import__("PIL.Image").Image.new("RGB", (2560, 1600), "white").save(big, format="PNG")
+    small = shrink(base64.b64encode(big.getvalue()).decode())
+    assert image_size(small) == (1280, 800) and base64.b64decode(small)[:3] == b"\xff\xd8\xff"

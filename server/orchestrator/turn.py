@@ -225,7 +225,9 @@ class Turn:
             return error.group(1) == "OBSCURED"
         if len(REF.findall(self.snapshot)) < min_refs:
             return True
-        return not EXPECT_MET.search(step.result)
+        # The layer saw the page react ("effect: changed"): the next outline shows what changed, without a 6-13 s
+        # vision check after every click (YouTube run, 2026-10-18).
+        return not (EXPECT_MET.search(step.result) or re.search(r"effect:\s*changed", step.result, re.I))
 
     def describe(self, step: Step) -> str:
         """An action in words, for the vision model: 'click on button "Blank"' plus the layer's receipt."""

@@ -27,6 +27,7 @@ import time
 from dataclasses import dataclass, field
 
 from ..command import Command, Point
+from ..imaging import shrink
 from ..config import Settings
 from ..memory import SiteMemory
 from ..prompt import decide_messages
@@ -193,7 +194,7 @@ async def run_step(
     if fresh and intent == AFTER_SHOT[1]["intent"] and act >= 0:
         action = turn.describe(turn.steps[act])
         started = time.monotonic()
-        reply = await link.run("chat", after_action_prompt(action), turn.image_b64)
+        reply = await link.run("chat", after_action_prompt(action), shrink(turn.image_b64))
         out.timings["after_action_ms"] = int((time.monotonic() - started) * 1000)
         seen = parse_location(str((reply.result or {}).get("text", ""))) if reply else None
         if seen:
@@ -205,7 +206,7 @@ async def run_step(
     elif fresh and intent not in (CHECK_SHOT[1]["intent"], PLAIN_SHOT[1]["intent"]) and wants_perception(turn, settings):
         # A page shot, or one the server did not ask for (Nanobrowser's own): described as a page.
         started = time.monotonic()
-        reply = await link.run("perceive", PERCEIVE_PROMPT, turn.image_b64)
+        reply = await link.run("perceive", PERCEIVE_PROMPT, shrink(turn.image_b64))
         out.timings["perceive_ms"] = int((time.monotonic() - started) * 1000)
         out.perception = reply.result if reply else None
         if reply is None:

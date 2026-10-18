@@ -43,6 +43,18 @@ def _open(image_b64: str) -> Image.Image:
     return Image.open(io.BytesIO(base64.b64decode(image_b64))).convert("RGB")
 
 
+def shrink(image_b64: str, max_side: int = 1280, quality: int = 85) -> str:
+    """The screenshot as JPEG with its longer side at most `max_side`: fewer image tokens for the VLM, so a page
+    description takes seconds less. Only for looking: clicks by position use the full image and its scale."""
+    img = _open(image_b64)
+    w, h = img.size
+    if max(w, h) > max_side:
+        img = img.resize((round(w * max_side / max(w, h)), round(h * max_side / max(w, h))), Image.LANCZOS)
+    out = io.BytesIO()
+    img.save(out, format="JPEG", quality=quality)
+    return base64.b64encode(out.getvalue()).decode()
+
+
 def image_size(image_b64: str) -> tuple[int, int]:
     """Width and height of an image in pixels."""
     return _open(image_b64).size
