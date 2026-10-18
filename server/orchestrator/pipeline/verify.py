@@ -63,7 +63,9 @@ def done_prompt(cmd: Command, task: str) -> str:
         "Check the claim yourself. First find on the page each thing the request asked for, and name the exact element "
         "and where it is (for a spreadsheet: the cell's column and row). In a spreadsheet, the small box at the top "
         "left next to fx is the Name Box: it shows a cell address, it is not a cell, and text there is not in any cell.\n"
-        "Then decide: ok is true only if every part of the request is visible where it belongs.\n"
+        "When the request was to send or submit something, the form is usually gone afterwards: a confirmation or "
+        "thank-you message (such as \"Message sent\") is the proof, and a missing form is expected, not a failure.\n"
+        "Then decide: ok is true only if every part of the request is visible where it belongs, or its confirmation is.\n"
         'Answer only with JSON, in this order: {"evidence": "<what you see, and where, for each part; or not found>", '
         '"ok": true|false, "reason": "<one sentence>"}'
     )
