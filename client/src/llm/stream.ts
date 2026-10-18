@@ -87,6 +87,16 @@ export interface TurnRequest {
   retry?: RetryPolicy;
   /** For tests: how a retry waits. */
   sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
+  /**
+   * Propagated to the upstream HTTP call as `X-Trace-Id` for correlated tracing across the proxy.
+   * Absent on probe requests and tests.
+   */
+  traceId?: string;
+  /**
+   * Called before each backoff delay so the agent layer can log retry events without
+   * importing from `src/agent/` (which would violate the import rules).
+   */
+  onRetry?: (attempt: number, message: string, status: number | undefined) => void;
 }
 
 export function toToolSet(tools: Record<string, ToolDefinition>): ToolSet {
@@ -217,6 +227,9 @@ async function streamTurnNow(request: TurnRequest): Promise<TurnResult> {
         abortSignal: request.signal,
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         providerOptions: request.chat.providerOptions as any,
+        // Inject the trace ID as a custom header so the logging proxy can correlate
+        // server-side records with the client-side trace for this run.
+        ...(request.traceId ? { headers: { 'X-Trace-Id': request.traceId } } : {}),
         onError: () => undefined,
       });
       for await (const part of result.fullStream) {
@@ -306,6 +319,9 @@ async function streamTurnNow(request: TurnRequest): Promise<TurnResult> {
       continue;
     }
     if (!started && attempt < policy.attempts && isRetryable(failure)) {
+      // Notify the caller (e.g. the agent loop's tracer) before sleeping so the retry
+      // is recorded with the attempt number and error details while they are still fresh.
+      request.onRetry?.(attempt, errorText(failure), getApiCallStatusCode(failure));
       await sleep(backoffMs(attempt, policy, failure), request.signal);
       if (request.signal?.aborted) {
         return { text, toolCalls: [], finish: 'aborted', usage, durationMs: Date.now() - start, attempts: attempt };
