@@ -590,6 +590,30 @@ async def get_record(rid: str):
     return {k: v for k, v in r.items() if not k.startswith("_")}
 
 
+@app.get("/_api/traces")
+async def list_traces():
+    """Returns all unique trace IDs along with their record summaries."""
+    traces: dict[str, list[dict]] = {}
+    for r in RECORDS.values():
+        tid = r.get("trace_id")
+        if tid:
+            traces.setdefault(tid, []).append(_list_item(r))
+    return traces
+
+
+@app.get("/_api/traces/{trace_id}")
+async def get_trace(trace_id: str):
+    """Returns all records correlated with a given trace_id."""
+    matched = [
+        {k: v for k, v in r.items() if not k.startswith("_")}
+        for r in RECORDS.values()
+        if r.get("trace_id") == trace_id
+    ]
+    if not matched:
+        return JSONResponse({"error": "trace not found", "trace_id": trace_id}, status_code=404)
+    return {"trace_id": trace_id, "count": len(matched), "records": matched}
+
+
 
 
 @app.post("/_api/clear")
