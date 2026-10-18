@@ -1,0 +1,530 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Spike Proxy · Nanobrowser ⇄ Local LLM traffic viewer</title>
+<meta name="description" content="Live view of every prompt Nanobrowser sends to the local LLM and every reply it receives back." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --bg: hsl(228 22% 7%);
+    --bg-2: hsl(228 20% 10%);
+    --panel: hsla(228 20% 14% / .72);
+    --panel-solid: hsl(228 19% 13%);
+    --line: hsla(225 30% 70% / .10);
+    --line-2: hsla(225 30% 70% / .18);
+    --text: hsl(225 30% 93%);
+    --muted: hsl(225 14% 62%);
+    --dim: hsl(225 12% 45%);
+    --accent: hsl(258 90% 70%);
+    --accent-2: hsl(190 90% 60%);
+    --planner: hsl(36 95% 62%);
+    --navigator: hsl(190 85% 58%);
+    --validator: hsl(150 65% 55%);
+    --other: hsl(225 14% 62%);
+    --ok: hsl(150 65% 55%);
+    --err: hsl(355 85% 66%);
+    --sys: hsl(280 70% 72%);
+    --user: hsl(210 90% 68%);
+    --asst: hsl(150 60% 60%);
+    --tool: hsl(36 90% 64%);
+    --radius: 14px;
+    --mono: "JetBrains Mono", ui-monospace, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: Inter, system-ui, sans-serif;
+    color: var(--text);
+    background:
+      radial-gradient(1200px 600px at 10% -10%, hsla(258 90% 60% / .16), transparent 60%),
+      radial-gradient(900px 500px at 110% 10%, hsla(190 90% 55% / .12), transparent 60%),
+      var(--bg);
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb { background: hsla(225 20% 60% / .18); border-radius: 10px; border: 2px solid transparent; background-clip: padding-box; }
+  button { font: inherit; color: inherit; cursor: pointer; }
+
+  /* ---------- header ---------- */
+  header {
+    display: flex; align-items: center; gap: 18px; padding: 14px 22px;
+    border-bottom: 1px solid var(--line);
+    background: hsla(228 22% 8% / .6); backdrop-filter: blur(14px);
+  }
+  .brand { display: flex; align-items: center; gap: 12px; }
+  .logo {
+    width: 34px; height: 34px; border-radius: 10px;
+    background: conic-gradient(from 200deg, var(--accent), var(--accent-2), var(--accent));
+    display: grid; place-items: center; box-shadow: 0 6px 24px hsla(258 90% 60% / .35);
+  }
+  .logo svg { width: 18px; height: 18px; }
+  h1 { font-size: 15px; font-weight: 650; margin: 0; letter-spacing: .1px; }
+  .sub { font-size: 12px; color: var(--muted); margin-top: 2px; font-family: var(--mono); }
+  .live { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dim); }
+  .live.on .dot { background: var(--ok); box-shadow: 0 0 0 0 hsla(150 65% 55% / .6); animation: pulse 2s infinite; }
+  @keyframes pulse { 70% { box-shadow: 0 0 0 8px hsla(150 65% 55% / 0); } 100% { box-shadow: 0 0 0 0 hsla(150 65% 55% / 0); } }
+  .stats { display: flex; gap: 8px; margin-left: auto; }
+  .stat { padding: 6px 12px; border-radius: 10px; background: var(--panel); border: 1px solid var(--line); font-size: 12px; color: var(--muted); }
+  .stat b { color: var(--text); font-weight: 600; margin-left: 4px; font-variant-numeric: tabular-nums; }
+
+  /* ---------- toolbar ---------- */
+  .toolbar { display: flex; align-items: center; gap: 10px; padding: 10px 22px; border-bottom: 1px solid var(--line); }
+  .seg { display: inline-flex; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 3px; }
+  .seg button { border: 0; background: transparent; padding: 5px 11px; border-radius: 7px; font-size: 12px; color: var(--muted); transition: .15s; }
+  .seg button:hover { color: var(--text); }
+  .seg button.active { background: hsla(258 90% 70% / .18); color: var(--text); box-shadow: inset 0 0 0 1px hsla(258 90% 70% / .35); }
+  .search { flex: 1; max-width: 360px; position: relative; }
+  .search input {
+    width: 100%; padding: 8px 12px 8px 32px; border-radius: 10px; border: 1px solid var(--line);
+    background: var(--panel); color: var(--text); font: inherit; font-size: 13px; outline: none; transition: .15s;
+  }
+  .search input:focus { border-color: hsla(258 90% 70% / .5); box-shadow: 0 0 0 3px hsla(258 90% 70% / .15); }
+  .search svg { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); width: 14px; color: var(--dim); }
+  .btn { padding: 7px 12px; border-radius: 10px; border: 1px solid var(--line-2); background: var(--panel); font-size: 12px; transition: .15s; }
+  .btn:hover { border-color: hsla(258 90% 70% / .5); background: hsla(258 90% 70% / .12); }
+  .toggle { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--muted); cursor: pointer; user-select: none; }
+  .toggle input { accent-color: var(--accent); }
+  .spacer { flex: 1; }
+
+  /* ---------- layout ---------- */
+  main { flex: 1; display: grid; grid-template-columns: 380px 1fr; min-height: 0; }
+  #list { overflow-y: auto; border-right: 1px solid var(--line); padding: 10px; }
+  #detail { overflow-y: auto; min-width: 0; }
+
+  .item {
+    padding: 11px 12px; border-radius: 12px; border: 1px solid transparent; margin-bottom: 6px;
+    cursor: pointer; transition: background .15s, border-color .15s, transform .15s;
+    animation: slideIn .35s ease;
+  }
+  @keyframes slideIn { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+  .item:hover { background: hsla(225 30% 70% / .05); }
+  .item.sel { background: var(--panel); border-color: hsla(258 90% 70% / .35); box-shadow: 0 8px 30px hsla(258 90% 30% / .25); }
+  .row { display: flex; align-items: center; gap: 8px; }
+  .seq { font-family: var(--mono); font-size: 12px; color: var(--dim); min-width: 34px; }
+  .badge { font-size: 10.5px; font-weight: 600; letter-spacing: .4px; text-transform: uppercase; padding: 2px 7px; border-radius: 6px; }
+  .agent-planner { color: var(--planner); background: hsla(36 95% 62% / .12); }
+  .agent-navigator { color: var(--navigator); background: hsla(190 85% 58% / .12); }
+  .agent-validator { color: var(--validator); background: hsla(150 65% 55% / .12); }
+  .agent-other { color: var(--other); background: hsla(225 14% 62% / .12); }
+  .api { font-size: 10.5px; color: var(--muted); border: 1px solid var(--line-2); padding: 1px 6px; border-radius: 6px; font-family: var(--mono); }
+  .time { margin-left: auto; font-size: 11.5px; color: var(--dim); font-family: var(--mono); }
+  .meta { font-size: 11.5px; color: var(--muted); margin-top: 6px; display: flex; gap: 10px; font-family: var(--mono); }
+  .preview { font-size: 12.5px; color: var(--muted); margin-top: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .preview .fn { color: var(--tool); font-family: var(--mono); }
+  .state { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+  .state.done { background: var(--ok); }
+  .state.error { background: var(--err); }
+  .state.pending { border: 2px solid var(--accent); border-top-color: transparent; width: 11px; height: 11px; animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .empty { display: grid; place-items: center; height: 100%; color: var(--muted); text-align: center; padding: 40px; }
+  .empty h2 { color: var(--text); font-size: 18px; font-weight: 600; margin: 14px 0 8px; }
+  .empty code { font-family: var(--mono); font-size: 12.5px; background: var(--panel); border: 1px solid var(--line); padding: 3px 8px; border-radius: 7px; color: var(--accent-2); }
+  .empty .orb { width: 70px; height: 70px; border-radius: 50%; background: radial-gradient(circle at 30% 30%, var(--accent-2), var(--accent) 60%, transparent 70%); filter: blur(.5px); opacity: .8; animation: float 4s ease-in-out infinite; margin: 0 auto; }
+  @keyframes float { 50% { transform: translateY(-8px); } }
+
+  /* ---------- detail ---------- */
+  .d-head { position: sticky; top: 0; z-index: 3; padding: 16px 26px 0; background: linear-gradient(var(--bg) 70%, transparent); }
+  .flow { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .node { padding: 8px 12px; border-radius: 10px; background: var(--panel); border: 1px solid var(--line); font-size: 12.5px; }
+  .node small { display: block; color: var(--dim); font-size: 10.5px; font-family: var(--mono); margin-top: 2px; }
+  .arrow { color: var(--dim); font-family: var(--mono); font-size: 12px; }
+  .tabs { display: flex; gap: 2px; margin-top: 14px; border-bottom: 1px solid var(--line); }
+  .tabs button { border: 0; background: transparent; padding: 10px 14px; font-size: 13px; color: var(--muted); border-bottom: 2px solid transparent; transition: .15s; }
+  .tabs button:hover { color: var(--text); }
+  .tabs button.active { color: var(--text); border-bottom-color: var(--accent); }
+  .tabs .count { font-size: 11px; color: var(--dim); margin-left: 4px; }
+  .d-body { padding: 18px 26px 60px; }
+
+  .msg { border: 1px solid var(--line); background: var(--panel); border-radius: var(--radius); margin-bottom: 12px; overflow: hidden; backdrop-filter: blur(8px); }
+  .msg-h { display: flex; align-items: center; gap: 10px; padding: 9px 14px; border-bottom: 1px solid var(--line); font-size: 12px; }
+  .role { font-weight: 650; text-transform: uppercase; letter-spacing: .6px; font-size: 11px; }
+  .role-system, .role-developer { color: var(--sys); }
+  .role-user { color: var(--user); }
+  .role-assistant { color: var(--asst); }
+  .role-tool { color: var(--tool); }
+  .msg-h .info { color: var(--dim); font-family: var(--mono); font-size: 11px; }
+  .msg-h .acts { margin-left: auto; display: flex; gap: 6px; }
+  .mini { border: 1px solid var(--line-2); background: transparent; border-radius: 7px; padding: 3px 8px; font-size: 11px; color: var(--muted); transition: .15s; }
+  .mini:hover { color: var(--text); border-color: hsla(258 90% 70% / .5); }
+  .msg-b { padding: 12px 14px; }
+  pre.txt { margin: 0; white-space: pre-wrap; word-break: break-word; font-family: var(--mono); font-size: 12.5px; line-height: 1.6; color: hsl(225 25% 86%); }
+  .clamp { max-height: 340px; overflow: hidden; position: relative; }
+  .clamp::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 70px; background: linear-gradient(transparent, var(--panel-solid)); }
+  .imgs { display: flex; gap: 10px; flex-wrap: wrap; margin: 6px 0; }
+  .imgs img { max-width: 420px; max-height: 280px; border-radius: 10px; border: 1px solid var(--line-2); cursor: zoom-in; transition: transform .2s, box-shadow .2s; }
+  .imgs img:hover { transform: scale(1.01); box-shadow: 0 10px 30px hsla(0 0% 0% / .4); }
+  .part + .part { margin-top: 10px; }
+
+  .sec-title { font-size: 11px; font-weight: 650; letter-spacing: .8px; text-transform: uppercase; color: var(--dim); margin: 22px 0 10px; }
+  .sec-title:first-child { margin-top: 0; }
+  .kv { display: grid; grid-template-columns: 170px 1fr; gap: 6px 14px; font-size: 12.5px; }
+  .kv div:nth-child(odd) { color: var(--muted); }
+  .kv div:nth-child(even) { font-family: var(--mono); word-break: break-all; }
+  .callout { border-radius: var(--radius); padding: 12px 14px; font-size: 13px; border: 1px solid; }
+  .callout.err { border-color: hsla(355 85% 66% / .4); background: hsla(355 85% 66% / .08); color: hsl(355 90% 80%); }
+  .callout.note { border-color: hsla(258 90% 70% / .35); background: hsla(258 90% 70% / .08); color: var(--muted); }
+
+  .json { font-family: var(--mono); font-size: 12.5px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; margin: 0; }
+  .j-k { color: hsl(258 90% 78%); }
+  .j-s { color: hsl(150 55% 68%); }
+  .j-n { color: hsl(36 95% 68%); }
+  .j-b { color: hsl(190 85% 65%); }
+  .j-null { color: var(--dim); }
+
+  #lightbox { position: fixed; inset: 0; background: hsla(228 30% 4% / .88); display: none; place-items: center; z-index: 50; cursor: zoom-out; backdrop-filter: blur(6px); }
+  #lightbox.open { display: grid; }
+  #lightbox img { max-width: 94vw; max-height: 92vh; border-radius: 12px; box-shadow: 0 30px 80px #000; }
+  .toast { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%) translateY(20px); opacity: 0; background: var(--panel-solid); border: 1px solid var(--line-2); padding: 9px 16px; border-radius: 10px; font-size: 13px; transition: .25s; z-index: 60; }
+  .toast.show { opacity: 1; transform: translateX(-50%); }
+  kbd { font-family: var(--mono); font-size: 10.5px; border: 1px solid var(--line-2); border-bottom-width: 2px; padding: 1px 5px; border-radius: 5px; color: var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">
+    <div class="logo"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round"><path d="M4 12h5l2-5 2 10 2-5h5"/></svg></div>
+    <div>
+      <h1>Spike Proxy · Nanobrowser ⇄ Local LLM</h1>
+      <div class="sub" id="upstream">connecting…</div>
+    </div>
+  </div>
+  <span class="live" id="live"><span class="dot"></span><span id="liveText">offline</span></span>
+  <div class="stats">
+    <div class="stat">Requests<b id="sTotal">0</b></div>
+    <div class="stat">In flight<b id="sPending">0</b></div>
+    <div class="stat">Errors<b id="sErr">0</b></div>
+    <div class="stat">Avg latency<b id="sLat">–</b></div>
+  </div>
+</header>
+
+<div class="toolbar">
+  <div class="seg" id="agentFilter">
+    <button class="active" data-v="all" id="f-all">All</button>
+    <button data-v="planner" id="f-planner">Planner</button>
+    <button data-v="navigator" id="f-navigator">Navigator</button>
+    <button data-v="validator" id="f-validator">Validator</button>
+    <button data-v="other" id="f-other">Other</button>
+  </div>
+  <label class="search">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+    <input id="q" placeholder="Filter by output, tool name, error…" />
+  </label>
+  <div class="spacer"></div>
+  <label class="toggle"><input type="checkbox" id="follow" checked /> Follow latest</label>
+  <span style="font-size:11.5px;color:var(--dim)"><kbd>j</kbd>/<kbd>k</kbd> navigate</span>
+  <button class="btn" id="clearBtn">Clear view</button>
+</div>
+
+<main>
+  <aside id="list"></aside>
+  <section id="detail"></section>
+</main>
+
+<div id="lightbox"><img alt="Screenshot sent to the model" /></div>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = (s, el = document) => el.querySelector(s);
+const state = { items: [], sel: null, filter: "all", q: "", tab: "prompt", promptMode: "upstream", cache: new Map() };
+
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const fmtMs = (ms) => ms == null ? "…" : ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`;
+const fmtTime = (iso) => iso ? iso.slice(11, 19) : "";
+
+function toast(t) { const el = $("#toast"); el.textContent = t; el.classList.add("show"); clearTimeout(el._t); el._t = setTimeout(() => el.classList.remove("show"), 1400); }
+function copy(text) { navigator.clipboard.writeText(text).then(() => toast("Copied to clipboard")); }
+
+function highlight(obj) {
+  const s = esc(typeof obj === "string" ? obj : JSON.stringify(obj, null, 2));
+  return s.replace(/(&quot;(?:\\.|[^\\])*?&quot;)(\s*:)?|\b(true|false)\b|\bnull\b|-?\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b/g,
+    (m, str, colon, bool) => {
+      if (str) return colon ? `<span class="j-k">${str}</span>${colon}` : `<span class="j-s">${str}</span>`;
+      if (bool) return `<span class="j-b">${m}</span>`;
+      if (m === "null") return `<span class="j-null">${m}</span>`;
+      return `<span class="j-n">${m}</span>`;
+    });
+}
+
+function tryJson(text) {
+  if (typeof text !== "string") return null;
+  let t = text.trim();
+  const fence = t.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fence) t = fence[1].trim();
+  if (!/^[\[{]/.test(t)) return null;
+  try { return JSON.parse(t); } catch { return null; }
+}
+
+/* ---------------- list ---------------- */
+function visible() {
+  const q = state.q.toLowerCase();
+  return state.items.filter(r =>
+    (state.filter === "all" || r.agent === state.filter) &&
+    (!q || JSON.stringify(r).toLowerCase().includes(q)));
+}
+
+function itemHtml(r) {
+  const s = r.summary || {};
+  let prev = "";
+  if (r.state === "pending") prev = `<span style="color:var(--accent)">waiting for local LLM…</span>`;
+  else if (r.error) prev = `<span style="color:var(--err)">${esc(r.error.slice(0, 140))}</span>`;
+  else if (s.tool_calls?.length) prev = `→ <span class="fn">${esc(s.tool_calls.join(", "))}()</span> ${esc(s.output_preview || "")}`;
+  else prev = esc(s.output_preview || "(empty)");
+  return `<div class="item ${state.sel === r.id ? "sel" : ""}" data-id="${r.id}" id="item-${r.id}">
+    <div class="row">
+      <span class="state ${r.state}"></span>
+      <span class="seq">#${r.seq}</span>
+      <span class="badge agent-${r.agent}">${r.agent}</span>
+      <span class="api">${r.api}${r.stream ? " · sse" : ""}${r.shim ? " · tool-shim" : ""}</span>
+      <span class="time">${fmtTime(r.ts)} · ${fmtMs(r.latency_ms)}</span>
+    </div>
+    <div class="meta"><span>${s.messages ?? 0} msgs</span><span>${s.images ?? 0} img</span><span>${s.tools?.length ? s.tools.length + " tools" : s.response_format || "text"}</span>${s.prompt_tokens != null ? `<span>${s.prompt_tokens}→${s.completion_tokens} tok</span>` : ""}</div>
+    <div class="preview">${prev}</div>
+  </div>`;
+}
+
+function renderList() {
+  const v = visible().slice().reverse();
+  const list = $("#list");
+  if (!v.length) {
+    list.innerHTML = `<div class="empty"><div><div class="orb"></div><h2>No traffic yet</h2>
+      <p>Point Nanobrowser's custom OpenAI provider at<br><br><code>${esc(location.origin)}/v1</code><br><br>
+      or its Anthropic provider at <code>${esc(location.origin)}</code></p></div></div>`;
+  } else list.innerHTML = v.map(itemHtml).join("");
+  const done = state.items.filter(r => r.latency_ms != null);
+  $("#sTotal").textContent = state.items.length;
+  $("#sPending").textContent = state.items.filter(r => r.state === "pending").length;
+  $("#sErr").textContent = state.items.filter(r => r.state === "error").length;
+  $("#sLat").textContent = done.length ? fmtMs(Math.round(done.reduce((a, r) => a + r.latency_ms, 0) / done.length)) : "–";
+}
+
+/* ---------------- detail ---------------- */
+function renderContent(content) {
+  if (content == null) return `<pre class="txt" style="color:var(--dim)">(no content)</pre>`;
+  if (typeof content === "string") return textBlock(content);
+  if (!Array.isArray(content)) return `<div class="part"><pre class="json">${highlight(content)}</pre></div>`;
+  return content.map(p => {
+    if (typeof p === "string") return `<div class="part">${textBlock(p)}</div>`;
+    if (p.type === "text") return `<div class="part">${textBlock(p.text || "")}</div>`;
+    if (p.type === "image_url") {
+      const u = p.image_url?.url || "";
+      return `<div class="part imgs"><img src="${esc(u)}" alt="image sent to model" loading="lazy" /></div>`;
+    }
+    if (p.type === "image") {
+      const u = p.source?.data || p.url || "";
+      return `<div class="part imgs"><img src="${esc(u)}" alt="image sent to model" loading="lazy" /></div>`;
+    }
+    if (p.type === "tool_result") {
+      const sub = typeof p.content === "string" ? textBlock(p.content) : renderContent(p.content);
+      return `<div class="part"><div class="sec-title" style="margin:10px 0 6px">tool result · <span style="color:var(--tool)">${esc(p.tool_use_id || "")}</span>${p.is_error ? ` <span style="color:var(--err)">[ERROR]</span>` : ""}</div>${sub}</div>`;
+    }
+    if (p.type === "tool_use") {
+      return `<div class="part"><div class="sec-title" style="margin:10px 0 6px">tool use · <span style="color:var(--tool)">${esc(p.name)}</span> (${esc(p.id)})</div><pre class="json">${highlight(p.input)}</pre></div>`;
+    }
+    return `<div class="part"><pre class="json">${highlight(p)}</pre></div>`;
+  }).join("");
+}
+
+function textBlock(t) {
+  const long = (t || "").length > 1800;
+  return `<pre class="txt ${long ? "clamp" : ""}">${esc(t)}</pre>${long ? `<button class="mini expand" style="margin-top:8px">Show all ${t.length.toLocaleString()} chars</button>` : ""}`;
+}
+
+function msgCard(m, i) {
+  const role = m.role || "?";
+  let text = "";
+  if (typeof m.content === "string") text = m.content;
+  else if (Array.isArray(m.content)) text = m.content.filter(p => p.type === "text").map(p => p.text).join("\n");
+  const imgs = Array.isArray(m.content) ? m.content.filter(p => p.type === "image_url" || p.type === "image").length : 0;
+  let body = renderContent(m.content);
+  if (m.tool_calls?.length) body += m.tool_calls.map(tc => {
+    let args = tc.function?.arguments; try { args = JSON.parse(args); } catch {}
+    return `<div class="part"><div class="sec-title" style="margin:10px 0 6px">tool call · <span style="color:var(--tool)">${esc(tc.function?.name)}</span></div><pre class="json">${highlight(args)}</pre></div>`;
+  }).join("");
+  return `<div class="msg"><div class="msg-h">
+      <span class="role role-${role}">${role}</span>
+      <span class="info">[${i}] ${(text || "").length.toLocaleString()} chars${imgs ? ` · ${imgs} image` : ""}${m.tool_call_id ? ` · ${esc(m.tool_call_id)}` : ""}</span>
+      <span class="acts"><button class="mini" data-copy="${i}">Copy text</button></span>
+    </div><div class="msg-b">${body}</div></div>`;
+}
+
+function outputHtml(r) {
+  const resp = r.upstream_response;
+  if (r.state === "pending") return `<div class="callout note">The local LLM is still working on this request…</div>`;
+  let h = "";
+  if (r.error) h += `<div class="callout err"><b>Error ${r.status ?? ""}</b><br><pre class="txt" style="color:inherit">${esc(r.error)}</pre></div>`;
+  if (!resp) return h;
+  const msg = resp.choices?.[0]?.message || {};
+  const fin = resp.choices?.[0]?.finish_reason;
+  h += `<div class="sec-title">What the local LLM returned · finish_reason: ${esc(fin)}</div>`;
+  if (msg.reasoning_content) h += `<div class="msg"><div class="msg-h"><span class="role role-system">reasoning</span></div><div class="msg-b">${textBlock(msg.reasoning_content)}</div></div>`;
+  if (msg.content) {
+    const parsed = tryJson(msg.content);
+    h += `<div class="msg"><div class="msg-h"><span class="role role-assistant">content</span><span class="info">${parsed ? "parsed as JSON" : "plain text"}</span><span class="acts"><button class="mini" data-copyraw="content">Copy</button></span></div>
+      <div class="msg-b">${parsed ? `<pre class="json">${highlight(parsed)}</pre>` : textBlock(msg.content)}</div></div>`;
+  }
+  for (const tc of msg.tool_calls || []) {
+    let args = tc.function?.arguments; try { args = JSON.parse(args); } catch {}
+    h += `<div class="msg"><div class="msg-h"><span class="role role-tool">tool call</span><span class="info">${esc(tc.function?.name)} · ${esc(tc.id || "")}</span></div><div class="msg-b"><pre class="json">${highlight(args)}</pre></div></div>`;
+  }
+  if (!msg.content && !msg.tool_calls?.length) h += `<div class="callout note">The model returned an empty message.</div>`;
+  if (r.client_response) {
+    const why = r.shim && r.api === "openai" ? "tool-call emulation: the JSON reply above was converted into a tool call"
+      : r.shim ? "tool-call emulation + translated to Anthropic format" : "translated to Anthropic format";
+    h += `<div class="sec-title">What Nanobrowser received (${why}${r.stream ? ", replayed as SSE" : ""})</div>
+      <div class="msg"><div class="msg-b"><pre class="json">${highlight(r.client_response)}</pre></div></div>`;
+  } else {
+    h += `<div class="callout note" style="margin-top:6px">OpenAI pass-through: Nanobrowser received exactly this reply${r.stream ? " (as SSE chunks, reassembled here)" : ""}.</div>`;
+  }
+  return h;
+}
+
+function toolsHtml(req) {
+  let h = "";
+  if (req.tools?.length) {
+    h += `<div class="sec-title">Tools offered to the model · tool_choice: ${esc(JSON.stringify(req.tool_choice ?? "auto"))}</div>`;
+    h += req.tools.map(t => `<div class="msg"><div class="msg-h"><span class="role role-tool">${esc(t.function?.name)}</span><span class="info">${esc((t.function?.description || "").slice(0, 120))}</span></div><div class="msg-b"><pre class="json">${highlight(t.function?.parameters)}</pre></div></div>`).join("");
+  }
+  if (req.response_format) h += `<div class="sec-title">response_format</div><div class="msg"><div class="msg-b"><pre class="json">${highlight(req.response_format)}</pre></div></div>`;
+  const params = Object.fromEntries(Object.entries(req).filter(([k]) => !["messages", "tools", "response_format"].includes(k)));
+  h += `<div class="sec-title">Sampling & other parameters</div><div class="msg"><div class="msg-b"><pre class="json">${highlight(params)}</pre></div></div>`;
+  return h || `<div class="callout note">No tools or structured-output schema in this request.</div>`;
+}
+
+function rawHtml(r) {
+  const blocks = [
+    ["Request headers (selected)", r.headers],
+    [`Client request (${r.api} format, as sent by Nanobrowser)`, r.client_request],
+    r.pre_shim_request && ["Before tool emulation (OpenAI format, with tools)", r.pre_shim_request],
+    r.upstream_request && [r.shim ? "Upstream request (tools replaced by JSON instructions, sent to the local LLM)" : "Upstream request (translated → OpenAI, sent to the local LLM)", r.upstream_request],
+    ["Upstream response (from llama-server)", r.upstream_response],
+    r.client_response && ["Client response (returned to Nanobrowser)", r.client_response],
+  ].filter(Boolean);
+  return blocks.map(([t, o], i) => `<div class="sec-title" style="display:flex;align-items:center;gap:10px">${esc(t)}<button class="mini" data-rawcopy="${i}">Copy JSON</button></div>
+    <div class="msg"><div class="msg-b"><pre class="json">${highlight(o)}</pre></div></div>`).join("");
+}
+
+async function renderDetail() {
+  const d = $("#detail");
+  if (!state.sel) { d.innerHTML = `<div class="empty"><div><div class="orb"></div><h2>Select a request</h2><p>See the exact prompt, screenshot and reply for each model call.</p></div></div>`; return; }
+  let r = state.cache.get(state.sel);
+  const li = state.items.find(x => x.id === state.sel);
+  if (!r || (li && r.state !== li.state)) {
+    const res = await fetch(`/_api/records/${state.sel}`);
+    if (!res.ok) return;
+    r = await res.json(); state.cache.set(r.id, r);
+  }
+  const isAnthropic = r.api === "anthropic" && r.client_request;
+  const useClient = isAnthropic && state.promptMode === "client";
+  let msgs = [];
+  if (useClient) {
+    if (r.client_request.system) {
+      msgs.push({ role: "system", content: r.client_request.system });
+    }
+    msgs = msgs.concat(r.client_request.messages || []);
+  } else {
+    const req = r.upstream_request || r.client_request || {};
+    msgs = req.messages || [];
+  }
+  const s = r.summary || {};
+  const reqForTools = r.pre_shim_request || r.upstream_request || r.client_request || {};
+  const tabs = [["prompt", "Prompt", msgs.length], ["output", "Output", ""], ["tools", "Tools & params", reqForTools.tools?.length || ""], ["raw", "Raw JSON", ""]];
+  let body = "";
+  if (state.tab === "prompt") {
+    let modeToggle = "";
+    if (isAnthropic) {
+      modeToggle = `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;padding:6px 12px;background:var(--panel);border:1px solid var(--line);border-radius:10px">
+        <span style="font-size:12px;color:var(--muted)">Viewing: <b>${useClient ? "Original Nanobrowser Request (Anthropic API)" : "Translated Request (OpenAI format sent to local LLM)"}</b></span>
+        <div class="seg" id="promptModeToggle">
+          <button class="${!useClient ? 'active' : ''}" data-pm="upstream">Local LLM</button>
+          <button class="${useClient ? 'active' : ''}" data-pm="client">Nanobrowser</button>
+        </div>
+      </div>`;
+    }
+    body = modeToggle + msgs.map(msgCard).join("");
+  }
+  else if (state.tab === "output") body = outputHtml(r);
+  else if (state.tab === "tools") body = (r.shim ? `<div class="callout note">This model has no native tool support, so the proxy removed <code>tools</code> and asked for the JSON arguments directly (see the end of the system prompt). These are the original tools Nanobrowser asked for.</div>` : "") + toolsHtml(reqForTools);
+  else body = rawHtml(r);
+
+  d.innerHTML = `<div class="d-head">
+      <div class="flow">
+        <div class="node">Nanobrowser · <span class="badge agent-${r.agent}">${r.agent}</span><small>${esc(r.api)} ${esc(r.path)}</small></div>
+        <span class="arrow">──▶</span>
+        <div class="node">Proxy #${r.seq}<small>${esc(fmtTime(r.ts))}${r.api !== "openai" ? " · translated" : " · pass-through"}${r.shim ? " · tool-shim" : ""}</small></div>
+        <span class="arrow">──▶</span>
+        <div class="node">Local LLM<small>${esc(r.upstream_request?.model || r.client_request?.model || "")}</small></div>
+        <span class="arrow">◀── ${r.status ?? "…"} · ${fmtMs(r.latency_ms)}</span>
+        ${s.prompt_tokens != null ? `<div class="node">${s.prompt_tokens} → ${s.completion_tokens} tokens<small>prompt → completion</small></div>` : ""}
+      </div>
+      <div class="tabs">${tabs.map(([k, l, c]) => `<button data-tab="${k}" id="tab-${k}" class="${state.tab === k ? "active" : ""}">${l}${c !== "" ? `<span class="count">${c}</span>` : ""}</button>`).join("")}</div>
+    </div><div class="d-body">${body}</div>`;
+
+  d.querySelectorAll("[data-tab]").forEach(b => b.onclick = () => { state.tab = b.dataset.tab; renderDetail(); });
+  d.querySelectorAll("#promptModeToggle button").forEach(b => b.onclick = () => { state.promptMode = b.dataset.pm; renderDetail(); });
+  d.querySelectorAll(".expand").forEach(b => b.onclick = () => { b.previousElementSibling.classList.remove("clamp"); b.remove(); });
+  d.querySelectorAll(".imgs img").forEach(img => img.onclick = () => { $("#lightbox img").src = img.src; $("#lightbox").classList.add("open"); });
+  d.querySelectorAll("[data-copy]").forEach(b => b.onclick = () => {
+    const m = msgs[+b.dataset.copy];
+    copy(typeof m.content === "string" ? m.content : (m.content || []).filter(p => p.type === "text").map(p => p.text).join("\n"));
+  });
+  d.querySelectorAll("[data-copyraw]").forEach(b => b.onclick = () => copy(r.upstream_response?.choices?.[0]?.message?.content || ""));
+  const rawObjs = [r.headers, r.client_request, r.upstream_request, r.upstream_response, r.client_response].filter(Boolean);
+  d.querySelectorAll("[data-rawcopy]").forEach(b => b.onclick = () => copy(JSON.stringify(rawObjs[+b.dataset.rawcopy], null, 2)));
+}
+
+function select(id) {
+  state.sel = id;
+  document.querySelectorAll(".item").forEach(el => el.classList.toggle("sel", el.dataset.id === id));
+  $(`#item-${id}`)?.scrollIntoView({ block: "nearest" });
+  renderDetail();
+}
+
+/* ---------------- events ---------------- */
+$("#list").addEventListener("click", e => { const it = e.target.closest(".item"); if (it) { $("#follow").checked = false; select(it.dataset.id); } });
+$("#agentFilter").addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  state.filter = b.dataset.v; document.querySelectorAll("#agentFilter button").forEach(x => x.classList.toggle("active", x === b)); renderList();
+});
+$("#q").addEventListener("input", e => { state.q = e.target.value; renderList(); });
+$("#clearBtn").onclick = async () => { await fetch("/_api/clear", { method: "POST" }); };
+$("#lightbox").onclick = () => $("#lightbox").classList.remove("open");
+document.addEventListener("keydown", e => {
+  if (e.target.tagName === "INPUT") return;
+  if (e.key === "Escape") $("#lightbox").classList.remove("open");
+  if (e.key !== "j" && e.key !== "k") return;
+  const v = visible().slice().reverse(); if (!v.length) return;
+  let i = v.findIndex(r => r.id === state.sel);
+  i = e.key === "j" ? Math.min(v.length - 1, i + 1) : Math.max(0, i - 1);
+  $("#follow").checked = false; select(v[i].id);
+});
+
+async function boot() {
+  const info = await (await fetch("/_api/info")).json();
+  $("#upstream").textContent = `upstream ${info.upstream}${info.model_override ? " · model " + info.model_override : ""} · log ${info.log_file.split("/").slice(-1)[0]}`;
+  state.items = await (await fetch("/_api/records")).json();
+  renderList();
+  if (state.items.length) select(state.items[state.items.length - 1].id); else renderDetail();
+
+  const es = new EventSource("/_api/events");
+  es.onopen = () => { $("#live").classList.add("on"); $("#liveText").textContent = "live"; };
+  es.onerror = () => { $("#live").classList.remove("on"); $("#liveText").textContent = "reconnecting"; };
+  es.onmessage = (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.kind === "clear") { state.items = []; state.sel = null; state.cache.clear(); renderList(); renderDetail(); return; }
+    const r = m.record, i = state.items.findIndex(x => x.id === r.id);
+    if (i >= 0) state.items[i] = r; else state.items.push(r);
+    renderList();
+    if ($("#follow").checked && m.kind === "start") select(r.id);
+    else if (state.sel === r.id) { state.cache.delete(r.id); renderDetail(); }
+    else document.querySelectorAll(".item").forEach(el => el.classList.toggle("sel", el.dataset.id === state.sel));
+  };
+}
+boot();
+</script>
+</body>
+</html>
