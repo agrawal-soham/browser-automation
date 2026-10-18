@@ -23,6 +23,8 @@ import { learnFrom, turnEffort } from './run';
 import type { ResolvedModel } from './run';
 import { allTools, DONE_TOOL, kindOf, PAGE_ACTIONS } from './tools';
 import type { AgentTool, ToolKind } from './tools';
+import { addEvent, createTraceSession } from './tracer';
+import type { TraceSession } from './tracer';
 
 /** Every tool result is capped; a cut keeps a boundary's end marker. */
 export const RESULT_CAP = 8_000;
@@ -196,6 +198,9 @@ export class AgentLoop {
     return this.#debt;
   }
 
+  /** The active trace session for this run; set at the start of run(). */
+  #trace: TraceSession | null = null;
+
   constructor(readonly options: LoopOptions) {
     this.writer = new RunWriter(options.conversationId, options.runId);
     this.guards = new Guards(options.restore?.guards);
@@ -226,6 +231,7 @@ export class AgentLoop {
       const plan = planElision(await activeBranch(this.options.conversationId));
       const saved = plan.reduce((n, e) => n + e.saved, 0) / 4;
       if (plan.length && (tokens > threshold || saved >= elisionChunk(window))) {
+        const tokensBefore = tokens;
         for (const e of plan) {
           await appendEntry(this.options.conversationId, {
             type: 'context_edit',
@@ -237,6 +243,14 @@ export class AgentLoop {
         this.#reported = null;
         rebuilt = await this.prepareRequest();
         tokens = this.estimate(rebuilt);
+        if (this.#trace) {
+          addEvent(this.#trace, {
+            type: 'CONTEXT_TRIM',
+            stage: 'elision',
+            tokens_before: Math.round(tokensBefore),
+            tokens_after: Math.round(tokens),
+          });
+        }
       }
     }
     if (tokens > threshold || this.#compactRequested) {
@@ -252,7 +266,16 @@ export class AgentLoop {
       tokens = this.estimate(rebuilt);
     }
     // Step 4: what is always kept does not fit. No step drops or shortens a user message to go on.
-    if (tokens > limit) return { stop: CONTEXT_LIMIT };
+    if (tokens > limit) {
+      if (this.#trace) {
+        addEvent(this.#trace, {
+          type: 'ERROR',
+          source: 'CONTEXT_LIMIT',
+          message: CONTEXT_LIMIT,
+        });
+      }
+      return { stop: CONTEXT_LIMIT };
+    }
     return rebuilt ? { request: rebuilt } : {};
   }
 
@@ -269,6 +292,7 @@ export class AgentLoop {
   /** Step 3: shorten the recent part. True when it changed something. */
   async shorten(): Promise<boolean> {
     const { model } = this.options;
+    const tokensBefore = this.estimate(await this.prepareRequest());
     const result = await runShorten({
       conversationId: this.options.conversationId,
       model,
@@ -282,6 +306,14 @@ export class AgentLoop {
     const { emit } = this.options;
     emit({ type: 'compacted', tokensBefore: result.tokensBefore, tokensAfter: result.tokensAfter });
     for (const n of result.notices) emit({ type: 'message_end', entry: { kind: 'notice', ...n } });
+    if (this.#trace) {
+      addEvent(this.#trace, {
+        type: 'CONTEXT_TRIM',
+        stage: 'shorten',
+        tokens_before: Math.round(tokensBefore),
+        tokens_after: result.tokensAfter,
+      });
+    }
     return true;
   }
 
@@ -294,11 +326,25 @@ export class AgentLoop {
     this.#window = Math.min(this.window, Math.floor(this.estimate(refused) * 0.9));
     if (this.#overflowStage === 0) {
       this.#overflowStage = 1;
-      if (await this.compact()) return true;
+      if (await this.compact()) {
+        if (this.#trace) addEvent(this.#trace, { type: 'OVERFLOW_RECOVER', stage: 1, new_window: this.#window });
+        return true;
+      }
     }
     if (this.#overflowStage === 1) {
       this.#overflowStage = 2;
-      if (await this.shorten()) return true;
+      if (await this.shorten()) {
+        if (this.#trace) addEvent(this.#trace, { type: 'OVERFLOW_RECOVER', stage: 2, new_window: this.#window });
+        return true;
+      }
+    }
+    if (this.#trace) {
+      addEvent(this.#trace, {
+        type: 'ERROR',
+        source: 'OVERFLOW_FATAL',
+        message: 'Could not recover from a context-window overflow: both compact and shorten made no change.',
+        detail: { overflow: true },
+      });
     }
     return false;
   }
@@ -316,6 +362,7 @@ export class AgentLoop {
   /** Step 2: compaction. True when it ran; starts the cooldown and tells the panel. */
   async compact(): Promise<boolean> {
     const { model, system, tools } = this.options;
+    const tokensBefore = this.estimate(await this.prepareRequest());
     const result = await runCompaction({
       conversationId: this.options.conversationId,
       model,
@@ -332,6 +379,14 @@ export class AgentLoop {
     const { emit } = this.options;
     emit({ type: 'compacted', tokensBefore: result.tokensBefore, tokensAfter: result.tokensAfter });
     for (const n of result.notices) emit({ type: 'message_end', entry: { kind: 'notice', ...n } });
+    if (this.#trace) {
+      addEvent(this.#trace, {
+        type: 'CONTEXT_TRIM',
+        stage: 'compact',
+        tokens_before: Math.round(tokensBefore),
+        tokens_after: result.tokensAfter,
+      });
+    }
     return true;
   }
 
@@ -711,11 +766,32 @@ export class AgentLoop {
   async finishTurn(reply: TurnResult, outcomes: CallOutcome[]): Promise<LoopEnd | null> {
     await this.writer.run({ turns: this.#turns, debt: this.#debt, guards: this.guards.state });
     const done = outcomes.find(o => o.done)?.done;
+
+    // Emit TURN_SUMMARY regardless of how the turn ends.
+    if (this.#trace) {
+      addEvent(this.#trace, {
+        type: 'TURN_SUMMARY',
+        turn: this.#turns,
+        outcomes: outcomes.length,
+        done: !!done,
+      });
+    }
+
     if (done) {
       const status: RunStatus = done.outcome === 'failed' ? 'failed' : 'done';
       return { status, outcome: done.outcome, summary: done.summary, usage: this.#usage, turns: this.#turns };
     }
-    if (this.#guardStop) return this.salvage(this.#guardStop.reason, `guard_${this.#guardStop.guard}`);
+    if (this.#guardStop) {
+      if (this.#trace) {
+        addEvent(this.#trace, {
+          type: 'ERROR',
+          source: 'GUARD_STOP',
+          message: this.#guardStop.reason,
+          detail: { guard: this.#guardStop.guard },
+        });
+      }
+      return this.salvage(this.#guardStop.reason, `guard_${this.#guardStop.guard}`);
+    }
     if (!reply.toolCalls.length) {
       if (!this.#mutated) return { status: 'done', outcome: 'success', usage: this.#usage, turns: this.#turns };
       // Plain text after a mutation: one note, then partial.
@@ -773,11 +849,26 @@ export class AgentLoop {
 
   async run(): Promise<LoopEnd> {
     const { emit, signal } = this.options;
+    // Create a trace session for this entire run. Every event across all turns
+    // shares the same trace_id, making the full timeline auditable.
+    this.#trace = createTraceSession(this.options.conversationId, this.options.runId);
     emit({ type: 'agent_start', runId: this.options.runId });
     try {
       await this.firstTurn();
+      // Emit TASK_START after firstTurn() so the user message (possibly augmented
+      // with a page outline) is already stored and we can read the text.
+      const task = await this.#firstUserText();
+      addEvent(this.#trace, {
+        type: 'TASK_START',
+        task,
+        model: this.options.model.ref.model,
+        turnCap: this.options.turnCap,
+      });
       for (;;) {
-        if (signal.aborted) return this.#end({ status: 'stopped' });
+        if (signal.aborted) {
+          addEvent(this.#trace, { type: 'ERROR', source: 'LOOP_ABORTED', message: 'User stopped the run.' });
+          return this.#end({ status: 'stopped' });
+        }
         await this.#deliverSteering();
         await this.storeHeader();
         const request = await this.prepareRequest();
@@ -785,6 +876,8 @@ export class AgentLoop {
         if (check.stop) return this.#end({ status: 'failed', outcome: 'failed', reason: check.stop, cause: 'context' });
         this.#turns++;
         emit({ type: 'turn_start', turn: this.#turns });
+        // Keep the session's turn counter in sync so every event records the right turn.
+        if (this.#trace) this.#trace.turn = this.#turns;
         const sent = check.request ?? request;
         const reply = await this.#stream(sent);
         emit({ type: 'turn_end', turn: this.#turns });
@@ -819,15 +912,37 @@ export class AgentLoop {
         }
         if (reply.error) {
           const { message, ...providerError } = reply.error;
+          if (this.#trace) {
+            addEvent(this.#trace, {
+              type: 'ERROR',
+              source: 'LLM_STREAM',
+              message,
+              detail: {
+                status: providerError.status,
+                overflow: providerError.overflow,
+                network: providerError.network,
+              },
+            });
+          }
           return this.#end({ status: 'failed', outcome: 'failed', reason: message, cause: 'provider', providerError });
         }
         // A reply that spent its whole allowance reasoning ends the turn as an error, not a silent success.
         if (reply.finish === 'length' && !reply.text && !reply.toolCalls.length) {
+          if (this.#trace) {
+            addEvent(this.#trace, {
+              type: 'ERROR',
+              source: 'CUT_BEFORE_ANYTHING',
+              message: CUT_BEFORE_ANYTHING,
+            });
+          }
           return this.#end({ status: 'failed', outcome: 'failed', reason: CUT_BEFORE_ANYTHING, cause: 'cut' });
         }
         this.#overflowStage = 0;
         const outcomes = await this.#runBatch(reply);
-        if (signal.aborted && !outcomes.some(o => o.done)) return this.#end({ status: 'stopped' });
+        if (signal.aborted && !outcomes.some(o => o.done)) {
+          addEvent(this.#trace!, { type: 'ERROR', source: 'LOOP_ABORTED', message: 'User stopped the run.' });
+          return this.#end({ status: 'stopped' });
+        }
         const end = await this.finishTurn(reply, outcomes);
         if (end) {
           // done's summary is the answer the user reads, written as the agent's message.
@@ -842,6 +957,15 @@ export class AgentLoop {
         }
       }
     } finally {
+      // TASK_END always fires — even on every error path — so every trace is closed.
+      if (this.#trace) {
+        addEvent(this.#trace, {
+          type: 'TASK_END',
+          status: 'ended',
+          turns: this.#turns,
+          usage: this.#usage,
+        });
+      }
       emit({ type: 'agent_end', runId: this.options.runId });
     }
   }
@@ -866,6 +990,29 @@ export class AgentLoop {
     emit({ type: 'message_start', id });
     let text = '';
     const { reasoning, noneRetry } = turnEffort(model);
+
+    // Emit LLM_REQUEST before the actual network call.
+    if (this.#trace) {
+      const imageCount = messages.reduce((n, m) => {
+        if (!Array.isArray(m.content)) return n;
+        return n + (m.content as Array<Record<string, unknown>>).filter(p => p.type === 'image' || p.type === 'file').length;
+      }, 0);
+      addEvent(this.#trace, {
+        type: 'CONTEXT_BUILT',
+        chars: request.chars,
+        tokens_est: Math.round(this.estimate(request)),
+        messages: messages.length,
+        images: imageCount,
+      });
+      addEvent(this.#trace, {
+        type: 'LLM_REQUEST',
+        model: model.ref.model,
+        system_len: this.options.system.length,
+        messages: messages.length,
+        tools: tools.map(t => t.name),
+      });
+    }
+
     const reply = await streamTurn({
       chat: model.chat,
       system: this.options.system,
@@ -875,14 +1022,55 @@ export class AgentLoop {
       reasoning,
       noneRetry,
       signal,
+      traceId: this.#trace?.traceId,
+      onRetry: this.#trace
+        ? (attempt, message, status) => {
+            addEvent(this.#trace!, {
+              type: 'ERROR',
+              source: 'LLM_RETRY',
+              message,
+              detail: { attempt, status },
+            });
+          }
+        : undefined,
       onTextDelta: delta => {
         text += delta;
         emit({ type: 'message_update', id, text });
       },
     });
     learnFrom(model, reply);
-    if (reply.reasoningDropped) await this.#noteDropped();
-    if (reply.imagesDropped) await this.#noteOnce('images', IMAGES_DROPPED);
+    if (reply.reasoningDropped) {
+      await this.#noteDropped();
+      if (this.#trace) {
+        addEvent(this.#trace, {
+          type: 'ERROR',
+          source: 'REASONING_DROPPED',
+          message: REASONING_DROPPED,
+        });
+      }
+    }
+    if (reply.imagesDropped) {
+      await this.#noteOnce('images', IMAGES_DROPPED);
+      if (this.#trace) {
+        addEvent(this.#trace, {
+          type: 'ERROR',
+          source: 'IMAGES_DROPPED',
+          message: IMAGES_DROPPED,
+        });
+      }
+    }
+
+    // Emit LLM_RESPONSE with what the model returned.
+    if (this.#trace) {
+      addEvent(this.#trace, {
+        type: 'LLM_RESPONSE',
+        finish: reply.finish,
+        tool_calls: reply.toolCalls.map(c => c.toolName),
+        usage: reply.usage,
+        durationMs: reply.durationMs,
+        attempts: reply.attempts,
+      });
+    }
     const sent = reply.noneRefused ? noneRetry : reasoning;
     if (reply.usage) {
       this.#usage = addUsage(this.#usage, { ...ZERO_USAGE, ...reply.usage });
@@ -1057,15 +1245,68 @@ export class AgentLoop {
   /** Whether the user has sent a message while the run works. Set by the extension. */
   hasSteering: () => boolean = () => false;
 
+  /**
+   * The text of the first user message in the conversation, truncated at 500 chars.
+   * Used for the TASK_START trace event. Returns an empty string when no user message is found.
+   */
+  async #firstUserText(): Promise<string> {
+    try {
+      const branch = await activeBranch(this.options.conversationId);
+      const user = branch.find(e => e.type === 'message' && e.message.role === 'user' && !e.appOwned);
+      if (!user || user.type !== 'message') return '';
+      const text = user.message.parts
+        .map(p => (p.type === 'text' && !p.attached ? p.text : ''))
+        .filter(Boolean)
+        .join(' ');
+      return text.slice(0, 500);
+    } catch {
+      return '';
+    }
+  }
+
   async #execute(call: ToolCallRequest): Promise<CallOutcome> {
     const { emit, signal } = this.options;
     const args = (call.input ?? {}) as Record<string, unknown>;
     const kind = kindOf(call.toolName, args);
     emit({ type: 'tool_execution_start', messageId: this.#replyId, row: this.#row(call, 'running') });
+
+    // Log invalid (unparseable) tool calls before the pre-dispatch check.
+    if (call.invalid && this.#trace) {
+      addEvent(this.#trace, {
+        type: 'ERROR',
+        source: 'TOOL_INVALID',
+        message: call.invalid,
+        detail: { toolCallId: call.toolCallId, tool: call.toolName },
+      });
+    }
+
     const refused = await this.beforeToolCall(call);
-    if (refused) return this.afterToolCall(refused);
+    if (refused) {
+      if (this.#trace) {
+        addEvent(this.#trace, {
+          type: 'ERROR',
+          source: 'TOOL_REFUSED',
+          message: refused.text,
+          detail: { toolCallId: call.toolCallId, tool: call.toolName },
+        });
+      }
+      return this.afterToolCall(refused);
+    }
+
     // The intent record is on disk before anything is dispatched.
     await this.writer.intent(call.toolCallId, call.toolName, args);
+
+    // Log the dispatch with a truncated args preview.
+    if (this.#trace) {
+      addEvent(this.#trace, {
+        type: 'TOOL_DISPATCH',
+        toolCallId: call.toolCallId,
+        tool: call.toolName,
+        kind,
+        args_preview: JSON.stringify(args).slice(0, 300),
+      });
+    }
+
     let outcome: CallOutcome;
     if (call.toolName === 'done') {
       outcome = await this.#judgeDone(call, kind, args);
@@ -1100,6 +1341,27 @@ export class AgentLoop {
       const result = await this.options.layer.call(call.toolName, sent, signal);
       outcome = { call, kind, text: result.text, isError: !result.ok, result };
     }
-    return this.afterToolCall(outcome);
+    const finalOutcome = await this.afterToolCall(outcome);
+
+    // Log the result. Errors get their own ERROR event in addition to TOOL_RESULT.
+    if (this.#trace) {
+      addEvent(this.#trace, {
+        type: 'TOOL_RESULT',
+        toolCallId: call.toolCallId,
+        tool: call.toolName,
+        isError: finalOutcome.isError,
+        text_len: finalOutcome.text.length,
+      });
+      if (finalOutcome.isError && !finalOutcome.skipped) {
+        addEvent(this.#trace, {
+          type: 'ERROR',
+          source: 'TOOL_EXEC',
+          message: finalOutcome.text.slice(0, 500),
+          detail: { toolCallId: call.toolCallId, tool: call.toolName },
+        });
+      }
+    }
+
+    return finalOutcome;
   }
 }
