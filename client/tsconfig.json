@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  // Extends WXT's generated config only for its alias paths (from wxt.config.ts).
+  "extends": "./.wxt/tsconfig.json",
+  "compilerOptions": {
+    "allowJs": true,
+    "noEmit": true,
+    "target": "esnext",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "moduleDetection": "auto",
+    "isolatedModules": true,
+    "strict": true,
+    "noImplicitAny": true,
+    "strictNullChecks": true,
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "noImplicitReturns": true,
+    "jsx": "react-jsx",
+    "lib": ["DOM", "DOM.Iterable", "ESNext"],
+    // TypeScript 6 no longer includes every @types package by default.
+    "types": ["chrome", "node"],
+    "noUncheckedIndexedAccess": false,
+    "noImplicitOverride": false,
+    "noFallthroughCasesInSwitch": false,
+    "verbatimModuleSyntax": false,
+    "allowImportingTsExtensions": false
+  },
+  "include": [
+    "src",
+    "vite-env.d.ts",
+    "entrypoints",
+    "wxt.config.ts",
+    "web-ext.config.ts",
+    "vitest.config.mts",
+    "tailwind.config.ts"
+  ]
+}

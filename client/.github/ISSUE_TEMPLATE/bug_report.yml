@@ -1,0 +1,96 @@
+name: Bug Report
+description: Create a report to help us improve Nanobrowser
+title: '[Bug]: '
+labels: ['bug', 'needs-triage']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to fill out this bug report!
+
+  - type: input
+    id: version
+    attributes:
+      label: Nanobrowser Version
+      description: What version of Nanobrowser are you running?
+      placeholder: e.g., 0.3.0
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: A clear and concise description of what the bug is
+      placeholder: Tell us what happened...
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce
+      description: Steps to reproduce the behavior
+      placeholder: |
+        1. My prompt is '...'
+        2. I click '...'
+        3. I see '...'
+    validations:
+      required: true
+
+  - type: dropdown
+    id: browser
+    attributes:
+      label: Browser
+      description: Which browser are you using? Chrome and Edge are supported.
+      options:
+        - Chrome
+        - Edge
+        - Other (please specify in description)
+    validations:
+      required: true
+
+  - type: dropdown
+    id: llm_provider
+    attributes:
+      label: LLM Service Provider
+      description: Which LLM service provider are you using?
+      options:
+        - Anthropic
+        - OpenAI
+        - Google Gemini
+        - OpenRouter
+        - xAI Grok
+        - DeepSeek
+        - Mistral
+        - Ollama
+        - LM Studio
+        - Other OpenAI-compatible (please specify in description)
+    validations:
+      required: true
+
+  - type: input
+    id: model
+    attributes:
+      label: Model
+      description: Which model and reasoning effort were you using?
+      placeholder: e.g., claude-sonnet-5-5, Low
+    validations:
+      required: true
+
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Mode
+      description: Which mode was the agent in?
+      options:
+        - Ask
+        - Auto
+    validations:
+      required: false
+
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots
+      description: If applicable, add screenshots to help explain your problem
