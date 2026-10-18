@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Contact us</title><link rel="stylesheet" href="/style.css"></head>
+<body>
+<main>
+  <h1>Contact us</h1>
+  <p>Leave your details and we will get back to you. (Privacy layer end-to-end fixture: fake data only.)</p>
+  <form action="/submit" method="post">
+    <input type="hidden" name="kind" value="contact">
+    <label>Full name <input type="text" name="name" required></label>
+    <label>Email <input type="email" name="email" required></label>
+    <label>Phone <input type="tel" name="phone"></label>
+    <label>Message <textarea name="message"></textarea></label>
+    <button type="submit">Send message</button>
+  </form>
+</main>
+</body>
+</html>

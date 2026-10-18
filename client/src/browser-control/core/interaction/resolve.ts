@@ -1,7 +1,7 @@
 // Resolve and revalidate a target at action time: a few CDP calls, never a snapshot.
 import { LayerError } from '../../protocol/errors';
 import type { Target } from '../../protocol/schemas';
-import { isRefTarget, isSemanticTarget } from '../../protocol/schemas';
+import { isPointTarget, isRefTarget, isSemanticTarget } from '../../protocol/schemas';
 import type { ToolContext } from '../controller';
 import type { FrameRecord } from '../ports';
 import type { RefRecord } from '../refs';
@@ -13,6 +13,8 @@ import type { Observation } from '../perception/observe';
 import { observeTab, recentObservation } from '../tools/observe';
 import { NodeArg } from '../probe-client';
 import { fingerprint } from '../hash';
+import { nodeAtViewportPoint, scrollOffset } from '../geometry';
+import type { Point } from '../geometry';
 import { quote } from '../text';
 
 export interface ResolvedTarget {
@@ -24,7 +26,68 @@ export interface ResolvedTarget {
   /** For receipts and prompts: 'button "Delete" in row "INV-1042 Acme Corp Delete"'. */
   description: string;
   /** How the target was named, for the receipt. */
-  via: 'ref' | 'semantic';
+  via: 'ref' | 'semantic' | 'point';
+  /** A point target: the top-level viewport point to act at, instead of the element's centre. */
+  point?: Point;
+}
+
+/** How many elements up from the one under a point the walk looks for one the outline gives a ref. */
+const MAX_POINT_ANCESTORS = 40;
+
+/**
+ * The element a point of the last screenshot names: the element under it, or the nearest element above it that the
+ * outline gives a ref (the button around an icon, the canvas itself). Its role and name come from a fresh capture, so
+ * the gate classifies it as it would a ref. The point is valid only on the page as the screenshot showed it.
+ */
+async function resolvePoint(ctx: ToolContext, target: Point): Promise<RefRecord> {
+  if (!ctx.session.capabilities.has('vision')) {
+    throw new LayerError('CAPABILITY_DISABLED', 'A point target needs the "vision" capability');
+  }
+  const tab = ctx.tab();
+  const attachment = await ctx.attach();
+  const frames = await attachment.topology.frames();
+  const main = frames[0];
+  const shot = tab.shot;
+  if (!shot) throw new LayerError('STALE_POINT', 'No screenshot of the visible page was taken in this tab');
+  if (shot.loaderId !== main.loaderId) {
+    throw new LayerError('STALE_POINT', 'The page has loaded a new document since the last screenshot');
+  }
+  const scroll = await scrollOffset(attachment.cdp, undefined);
+  if (Math.abs(scroll.x - shot.scrollX) > 1 || Math.abs(scroll.y - shot.scrollY) > 1) {
+    throw new LayerError('STALE_POINT', 'The page has scrolled since the last screenshot');
+  }
+  const view = await tab.probe!.callGlobal<{ width: number; height: number }>(main, 'viewport');
+  if (Math.abs(view.width - shot.width) > 1) {
+    throw new LayerError('STALE_POINT', 'The window has been resized since the last screenshot');
+  }
+  if (target.x < 0 || target.y < 0 || target.x >= shot.width || target.y >= shot.height) {
+    throw new LayerError(
+      'INVALID_ARGUMENT',
+      `(${target.x}, ${target.y}) is outside the screenshot (${Math.round(shot.width)}×${Math.round(shot.height)} CSS px)`,
+    );
+  }
+  const hit = await nodeAtViewportPoint(attachment.cdp, main.sessionId, target);
+  if (!hit) throw new LayerError('NO_MATCH', `Nothing is at (${target.x}, ${target.y})`);
+  const frame = frames.find(f => f.frameId === hit.frameId);
+  if (!frame) throw new LayerError('NOT_INTERACTABLE', `The point is in a frame the layer cannot reach; use a ref`);
+  const observation = await observeTab(ctx);
+  const refs = new Map<string, string>();
+  walk(observation.tree, n => {
+    if (n.ref && n.backendNodeId !== undefined) refs.set(`${n.frameId}|${n.backendNodeId}`, n.ref);
+  });
+  const probe = tab.probe!;
+  let id: number | null = hit.backendNodeId;
+  for (let i = 0; id !== null && i < MAX_POINT_ANCESTORS; i++) {
+    const ref = refs.get(`${frame.frameId}|${id}`);
+    if (ref) return asShown(ctx, observation, ref);
+    const objectId = await probe.resolve(frame, id);
+    try {
+      id = await probe.callForNode(frame, objectId, 'parentOf');
+    } finally {
+      await probe.release(frame, objectId);
+    }
+  }
+  throw new LayerError('NO_MATCH', `Nothing the page outline can name is at (${target.x}, ${target.y})`);
 }
 
 function walk(nodes: ONode[], visit: (n: ONode, ancestors: ONode[]) => void, ancestors: ONode[] = []): void {
@@ -131,14 +194,26 @@ export async function resolveTarget(
   } else if (isSemanticTarget(target)) {
     record = await resolveSemantic(ctx, target, options.fresh);
     via = 'semantic';
+  } else if (isPointTarget(target)) {
+    const point = { x: target.x, y: target.y };
+    return withPoint(await resolveRecord(ctx, await resolvePoint(ctx, point), 'point'), point);
   } else {
-    const capability = 'selector' in target ? 'selector' : 'vision';
     throw new LayerError(
       'CAPABILITY_DISABLED',
-      `This target form needs the "${capability}" capability, which this version does not have`,
+      'This target form needs the "selector" capability, which this version does not have',
     );
   }
   return resolveRecord(ctx, record, via);
+}
+
+/** A point target: acted on at the point, and named with it in receipts (no hidden substitution). */
+export function withPoint(target: ResolvedTarget, point: Point | undefined): ResolvedTarget {
+  if (!point) return target;
+  return {
+    ...target,
+    point,
+    description: `${target.description} at (${Math.round(point.x)}, ${Math.round(point.y)})`,
+  };
 }
 
 /** Resolves and revalidates a known record (also used again after the user approved an action). */

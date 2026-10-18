@@ -7,7 +7,7 @@ import { checkCancelled } from '../controller';
 import type { FrameRecord } from '../ports';
 import { NodeArg } from '../probe-client';
 import type { ChainStep, Point, Quad } from '../geometry';
-import { chainToTop, nodeAtViewportPoint, quadArea, quadCenter, sessionRoot } from '../geometry';
+import { chainToTop, nodeAtViewportPoint, quadArea, quadBounds, quadCenter, sessionRoot } from '../geometry';
 import type { AXNode } from '../perception/ax';
 import { cleanText } from '../perception/ax';
 import { assertAsShown } from './resolve';
@@ -108,7 +108,8 @@ async function checkOnce(ctx: ToolContext, target: ResolvedTarget, needs: Needs)
   const name = target.description;
   const state = await probe.call<ProbeState>(target.frame, target.objectId, 'state');
   if (!state.connected) throw new LayerError('NODE_DETACHED', `${name} is no longer in the page`);
-  await scrollIntoView(ctx, target);
+  // A point is on the page as the screenshot showed it: scrolling would move what it names.
+  if (!target.point) await scrollIntoView(ctx, target);
   if (!state.enabled) throw new LayerError('DISABLED', `${name} is disabled`);
   if (needs.editable && !state.editable) throw new LayerError('NOT_EDITABLE', `${name} does not accept text`);
   let quad = state.visible ? await firstQuad(ctx, target) : null;
@@ -122,6 +123,9 @@ async function checkOnce(ctx: ToolContext, target: ResolvedTarget, needs: Needs)
     }
     return labelPoint(ctx, target);
   };
+  // A point target is pressed where it was given (a cell of a canvas grid), not at the element's centre; the element
+  // must still be there and must not move.
+  if (target.point) return checkAtPoint(ctx, target, needs, state, pointOf);
   if (!state.visible && !viaLabel) throw new LayerError('NOT_VISIBLE', `${name} is not visible`);
   const first = await pointOf();
   if (!first)
@@ -158,6 +162,39 @@ async function checkOnce(ctx: ToolContext, target: ResolvedTarget, needs: Needs)
   // session was shown. A node hidden when it was resolved had nothing to compare until now.
   await assertAsShown(ctx, target, { context: true });
   return { point: top, localPoint: b, chain, quad: again!, state };
+}
+
+/** `checkOnce` for a point target: its quad must hold the point and stay still; the hit test runs at the point. */
+async function checkAtPoint(
+  ctx: ToolContext,
+  target: ResolvedTarget,
+  needs: Needs,
+  state: ProbeState,
+  pointOf: () => Promise<{ quad: Quad; point: Point } | null>,
+): Promise<Actionable> {
+  const name = target.description;
+  const point = target.point!;
+  if (!state.visible) throw new LayerError('NOT_VISIBLE', `${name} is not visible`);
+  const first = await pointOf();
+  if (!first) throw new LayerError('NOT_VISIBLE', `${name} has no box on the page`);
+  await sleep(STABLE_GAP_MS);
+  const second = await pointOf();
+  const a = first.point;
+  const b = second?.point;
+  if (!b || Math.abs(a.x - b.x) > STABLE_TOLERANCE_PX || Math.abs(a.y - b.y) > STABLE_TOLERANCE_PX) {
+    throw new LayerError('NOT_STABLE', `${name} is moving`);
+  }
+  const box = quadBounds(second!.quad);
+  if (point.x < box.x || point.y < box.y || point.x > box.x + box.width || point.y > box.y + box.height) {
+    throw new LayerError('NOT_INTERACTABLE', `${name}: the point is outside the element's box`);
+  }
+  const { cdp } = await ctx.attach();
+  const probe = ctx.tab().probe!;
+  // Point targets are found in the top frame's session, where the local point and the top-level point are the same.
+  const chain = await chainToTop(cdp, target.frames, target.frame, point, root => probe.callGlobal(root, 'viewport'));
+  if (needs.pointer) await hitTest(ctx, target, point, chain, !!needs.overControls);
+  await assertAsShown(ctx, target, { context: true });
+  return { point: chain[chain.length - 1].point, localPoint: point, chain, quad: second!.quad, state };
 }
 
 /** The receives-events check: in the target's session, then at every process boundary up to the top. */

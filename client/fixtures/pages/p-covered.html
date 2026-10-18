@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Form editor</title><link rel="stylesheet" href="/style.css">
+<style>
+  .editor { position: relative; width: 420px; padding: 16px; border: 1px solid #ccc; }
+  /* Like Google Forms' floating toolbar layer: an invisible element above the button takes the pointer. */
+  .cover { position: absolute; left: 0; top: 0; width: 100%; height: 100%; background: rgba(255, 255, 255, 0.01); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Form editor</h1>
+  <p>Privacy layer fixture: a button that the pointer cannot reach (another element covers it).</p>
+  <div class="editor">
+    <button type="button" id="add">Add question</button>
+    <div class="cover" aria-hidden="true"></div>
+  </div>
+  <p id="status">No questions yet.</p>
+</main>
+<script>
+  let n = 0;
+  document.getElementById('add').addEventListener('click', () => {
+    n += 1;
+    document.getElementById('status').textContent = `Question added (${n}).`;
+  });
+</script>
+</body>
+</html>

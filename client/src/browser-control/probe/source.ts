@@ -154,6 +154,7 @@ export interface ProbeApi {
   textDigest(el: Element, max?: number): string;
   nameSources(el: Element): string;
   mutations(): number;
+  readyState(): DocumentReadyState;
   hitAccepts(target: Element, hit: Node): HitVerdict;
   describe(el: Node): string;
   armGuard(target: Element, mode: 'pointer' | 'text', lifetimeMs?: number, unfocused?: boolean): void;
@@ -173,6 +174,7 @@ export interface ProbeApi {
   watchBlock(el: Element): string;
   blockMutations(): number;
   hasText(text: string): boolean;
+  parentOf(el: Node): Element | null;
   navigationTarget(el: Element, mode: 'activate' | 'enter'): NavigationTarget | null;
   focused(): Element | null;
   activeIn(root: Node): Element | null;
@@ -803,6 +805,12 @@ export function probeMain(): void {
       return (root as ShadowRoot).activeElement ?? null;
     },
 
+    /** The nearest element above a node in the composed tree (across shadow roots), or null at the top. */
+    parentOf(el: Node) {
+      for (let n = composedParent(el); n; n = composedParent(n)) if (n instanceof Element) return n;
+      return null;
+    },
+
     /** Whether the page's visible text contains `text` (whitespace collapsed). */
     hasText(text: string) {
       const norm = (t: string) => t.replace(/\s+/g, ' ').trim();
@@ -870,6 +878,11 @@ export function probeMain(): void {
 
     mutations() {
       return mutationCount;
+    },
+
+    /** The document's loading state: loading, interactive or complete. */
+    readyState() {
+      return document.readyState;
     },
 
     /** The hit rule: whether a hit-test result counts as a hit on the target. */

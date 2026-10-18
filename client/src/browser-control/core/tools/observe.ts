@@ -2,7 +2,7 @@
 import { LayerError } from '../../protocol/errors';
 import type { FindArgs, ReadArgs, ScreenshotArgs, SnapshotArgs } from '../../protocol/schemas';
 import type { FindMatch, ScreenshotData, SnapshotData } from '../../protocol/results';
-import type { ToolContext, ToolOutcome } from '../controller';
+import type { ImagePrivacy, ToolContext, ToolOutcome } from '../controller';
 import { lookupRef } from '../refs';
 import type { RefRecord, Shown } from '../refs';
 import { captureTier1 } from '../perception/capture';
@@ -257,7 +257,7 @@ export async function screenshot(ctx: ToolContext, args: ScreenshotArgs): Promis
   const scale = shot.width / Math.max(1, cssWidth);
   let base64 = shot.base64;
   try {
-    const hidden = [...hiddenNodes(observation.tree), ...observation.unplaced];
+    const hidden = [...hiddenNodes(observation.tree, ctx.session.imagePrivacy), ...observation.unplaced];
     base64 = await blankBoxes(base64, await boxesOf(ctx, hidden, frames, origin, true), scale);
   } catch (error) {
     // The next screenshot captures afresh rather than reuse an observation the page has moved on from.
@@ -268,6 +268,7 @@ export async function screenshot(ctx: ToolContext, args: ScreenshotArgs): Promis
     );
   }
   let labelled = 0;
+  // Labels are drawn after the masking; the host is told of the image only once it is final (below).
   if (args.labels) {
     // Only what the image shows is presented: a ref outside a cropped image keeps the baseline it had.
     const image = clip ?? { width: shot.width / scale, height: shot.height / scale };
@@ -282,6 +283,18 @@ export async function screenshot(ctx: ToolContext, args: ScreenshotArgs): Promis
       ),
     );
   }
+  ctx.session.imagePrivacy?.onMasked(base64);
+  // Points (capability "vision") are given on a picture of the visible page; a cropped or full-page one is not that.
+  tab.shot =
+    args.ref || args.fullPage
+      ? undefined
+      : {
+          loaderId: frames[0].loaderId,
+          scrollX: scroll.x,
+          scrollY: scroll.y,
+          width: cssWidth,
+          height: shot.height / scale,
+        };
   return {
     data: { mimeType: 'image/png', base64, width: shot.width, height: shot.height, scale, origin },
     lines: [
@@ -290,11 +303,15 @@ export async function screenshot(ctx: ToolContext, args: ScreenshotArgs): Promis
   };
 }
 
-/** Nodes a screenshot paints over: masked values and options, and frames whose content was not captured or placed. */
-function hiddenNodes(roots: ONode[]): Array<{ frameId: string; backendNodeId: number }> {
+/**
+ * Nodes a screenshot paints over: masked values and options, frames whose content was not captured or placed, and
+ * nodes the host's privacy hook says hold personal data.
+ */
+function hiddenNodes(roots: ONode[], privacy?: ImagePrivacy): Array<{ frameId: string; backendNodeId: number }> {
   const out: Array<{ frameId: string; backendNodeId: number }> = [];
   const walk = (n: ONode) => {
-    if ((n.masked || n.unseen) && n.backendNodeId !== undefined)
+    const personal = !!privacy && !n.masked && privacy.hide(n.name, n.value);
+    if ((n.masked || n.unseen || personal) && n.backendNodeId !== undefined)
       out.push({ frameId: n.frameId, backendNodeId: n.backendNodeId });
     n.children.forEach(walk);
   };

@@ -15,6 +15,8 @@ import {
 } from '@src/store/settings';
 import type { LivePair } from '@src/store/types';
 import type { ResolvedModel } from '@src/agent/run';
+import { privacyFetch } from '@src/privacy';
+import { privacy } from './privacy';
 
 export class ModelUnavailable extends Error {}
 
@@ -75,15 +77,21 @@ export async function resolveModel(pair: LivePair | null): Promise<ResolvedModel
     detectedContext,
     ...learnt(found.model),
   });
-  const chat = createModel({
-    kind: found.provider.kind,
-    modelName: found.model.name,
-    apiKey: keys[found.provider.id],
-    baseUrl: found.provider.baseUrl,
-    maxOutputTokens: profile.maxOutput,
-    // Ollama and LM Studio take one request at a time by default; more wait in the extension, not on the server.
-    ...(LOCAL_KINDS.has(found.provider.kind) ? { maxConcurrent: 1 } : {}),
-  });
+  const chat = createModel(
+    {
+      kind: found.provider.kind,
+      modelName: found.model.name,
+      apiKey: keys[found.provider.id],
+      baseUrl: found.provider.baseUrl,
+      maxOutputTokens: profile.maxOutput,
+      // Ollama and LM Studio take one request at a time by default; more wait in the extension, not on the server.
+      ...(LOCAL_KINDS.has(found.provider.kind) ? { maxConcurrent: 1 } : {}),
+    },
+    {
+      // Every request to the model is redacted and leak-checked before it leaves the browser.
+      fetch: privacyFetch((input, init) => globalThis.fetch(input, init), privacy),
+    },
+  );
   const learn = (facts: Parameters<NonNullable<ResolvedModel['learn']>>[0]) =>
     void learnFacts(found.provider.id, found.provider.baseUrl, found.model.name, facts);
   return { ref, chat, profile, reasoning: pair.reasoning, learn };

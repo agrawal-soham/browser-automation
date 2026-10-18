@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Canvas grid</title><link rel="stylesheet" href="/style.css">
+<style>
+  body { min-height: 2400px; }
+  #grid { position: absolute; left: 40px; top: 120px; border: 1px solid #94a3b8; }
+  #order { position: absolute; left: 40px; top: 320px; }
+  .cover { position: absolute; left: 360px; top: 120px; width: 220px; height: 120px; background: #fef3c7; }
+</style></head>
+<body>
+<h1>Canvas grid</h1>
+<!-- A canvas draws its own "OK" button: the outline has the canvas, not the button. -->
+<canvas id="grid" width="300" height="150" tabindex="0" aria-label="Drawing board"></canvas>
+<button type="button" id="order"><span>Submit order</span></button>
+<!-- A plain banner over empty page: no control under it. -->
+<div class="cover">Banner</div>
+<script>
+  window.okClicks = 0;
+  window.otherClicks = 0;
+  window.orders = 0;
+  const canvas = document.getElementById('grid');
+  const g = canvas.getContext('2d');
+  g.fillStyle = '#16a34a';
+  g.fillRect(200, 50, 80, 50);
+  g.fillStyle = '#fff';
+  g.font = '20px sans-serif';
+  g.fillText('OK', 225, 82);
+  canvas.addEventListener('click', e => {
+    const r = canvas.getBoundingClientRect();
+    const x = e.clientX - r.left;
+    const y = e.clientY - r.top;
+    if (x >= 200 && x <= 280 && y >= 50 && y <= 100) window.okClicks++;
+    else window.otherClicks++;
+  });
+  document.getElementById('order').addEventListener('click', () => window.orders++);
+</script>
+</body>
+</html>

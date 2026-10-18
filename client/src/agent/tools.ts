@@ -17,7 +17,7 @@ export interface AgentTool extends ToolDefinition {
   required?: boolean;
 }
 
-/** Tools of the layer the agent never gets: page script, devtools, coordinates and selectors. */
+/** Tools of the layer the agent never gets: page script and devtools. (Selectors are refused by the layer; points only with the "vision" capability, which vision-model runs get.) */
 const NOT_OFFERED = new Set(['eval', 'devtools']);
 
 const GROUPS: Record<string, AgentTool['group']> = {

@@ -8,7 +8,7 @@ import type { ToolContext } from '../controller';
 import type { ConfirmAnswer, ConfirmRequest, FrameRecord } from '../ports';
 import { classify } from './classify';
 import type { Classification } from './classify';
-import { resolveRecord } from './resolve';
+import { resolveRecord, withPoint } from './resolve';
 import type { ResolvedTarget } from './resolve';
 import { maskSecrets } from '../redact';
 import { isSecretField, MASK } from '../perception/masking';
@@ -357,6 +357,7 @@ export async function gateTarget<T extends { target: ResolvedTarget }>(
   });
   if (!gate.prompted) return { state: current, gate };
   await ctx.tab().probe?.release(t.frame, t.objectId);
-  const fresh = await resolveRecord(ctx, t.record, t.via);
+  // A point target keeps its point: the approval was for the click there.
+  const fresh = withPoint(await resolveRecord(ctx, t.record, t.via), t.point);
   return { state: await reacquire(fresh), gate };
 }

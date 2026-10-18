@@ -7,7 +7,7 @@ import type { UserPrompt } from './core/ports';
 export * from './protocol';
 export type * from './core/ports';
 export { Controller, Session } from './core/controller';
-export type { AuditEntry, ControllerHost, SessionConfig } from './core/controller';
+export type { AuditEntry, ControllerHost, ImagePrivacy, SessionConfig } from './core/controller';
 export { TabLocks } from './core/lock';
 export { applyDiff } from './core/perception/diff';
 export { classify, enterSubmits } from './core/interaction/classify';

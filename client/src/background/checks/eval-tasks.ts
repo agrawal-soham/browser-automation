@@ -94,7 +94,35 @@ const replied = (f: RunFacts) =>
 
 const summarised = (f: RunFacts) => /keychron/i.test(f.answer) && /royal kludge|rk61/i.test(f.answer);
 
+/** The fake person of the privacy end-to-end task; the orchestrator's log must never contain these values. */
+export const PRIVACY_PERSON = { name: 'Jane Doe', email: 'jane.doe@example.com', phone: '+1 415 555 0134' };
+
 export const TASKS: EvalTask[] = [
+  {
+    // A button under an invisible layer (as on Google Forms): clicks are refused as covered, so the server's ladder
+    // (vision check, keyboard, hand-over) has to get it done or stop.
+    id: 'privacy-covered',
+    url: `${FIXTURE_ORIGIN}/p-covered.html`,
+    task: 'Click the Add question button once.',
+    grade: f => /Question added \(1\)/.test(f.pageText),
+  },
+  {
+    id: 'privacy-contact',
+    url: `${FIXTURE_ORIGIN}/p-contact.html`,
+    task: `Fill in the contact form with my details (my name is ${PRIVACY_PERSON.name}, email ${PRIVACY_PERSON.email}, phone ${PRIVACY_PERSON.phone}) and the message "Please call me back", then send it.`,
+    allow: /send|submit/i,
+    // The real values reached the page: the swap-back put them in at the last moment.
+    grade: f =>
+      f.posts.some(p => {
+        const body = decodeURIComponent(p.replace(/\+/g, ' '));
+        return (
+          /kind=contact/.test(body) &&
+          body.includes(PRIVACY_PERSON.name) &&
+          body.includes(PRIVACY_PERSON.email) &&
+          body.includes('415 555 0134')
+        );
+      }),
+  },
   {
     id: 'read-price',
     url: `${FIXTURE_ORIGIN}/e-shop.html`,

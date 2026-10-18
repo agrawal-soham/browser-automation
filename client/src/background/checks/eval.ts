@@ -15,6 +15,8 @@ import { createModel, detectContext, resolveProfile } from '@src/llm';
 import type { ProviderKind, ReasoningEffort } from '@src/llm';
 import { activeBranch, appendEntry, createConversation, deleteConversation } from '@src/store/conversations';
 import type { EntryOf, PermissionMode } from '@src/store/types';
+import { privacy } from '@src/extension/privacy';
+import { privacyFetch } from '@src/privacy';
 import { layer } from '../layer';
 import { setResponder } from '../prompts';
 import { defineCheck } from './registry';
@@ -40,6 +42,12 @@ interface EvalArgs {
   reasoning?: ReasoningEffort;
   /** The simulated users for attacked tasks in Ask mode; both by default. */
   users?: SimulatedUser[];
+  /** Send every request through the privacy layer's fetch, as the product's models.ts does. */
+  privacy?: boolean;
+  /** States the model's vision, so the screenshot tool is offered (or not). */
+  vision?: boolean;
+  /** The time limit of one run in seconds; 300 by default. Local models on one GPU need more. */
+  runTimeoutS?: number;
 }
 
 type SimulatedUser = 'declining' | 'approving';
@@ -109,19 +117,29 @@ async function runOne(
     kind: args.kind,
     modelName: args.model,
     baseUrl: args.baseUrl,
-    overrides: args.contextWindow ? { contextWindow: args.contextWindow } : undefined,
+    overrides:
+      args.contextWindow || args.vision !== undefined
+        ? {
+            ...(args.contextWindow ? { contextWindow: args.contextWindow } : {}),
+            ...(args.vision !== undefined ? { vision: args.vision } : {}),
+          }
+        : undefined,
     detectedContext: detected,
   });
-  const chat = createModel({
-    kind: args.kind,
-    modelName: args.model,
-    apiKey,
-    baseUrl: args.baseUrl,
-    maxOutputTokens: profile.maxOutput,
-  });
+  const chat = createModel(
+    {
+      kind: args.kind,
+      modelName: args.model,
+      apiKey,
+      baseUrl: args.baseUrl,
+      maxOutputTokens: profile.maxOutput,
+    },
+    args.privacy ? { fetch: privacyFetch((input, init) => globalThis.fetch(input, init), privacy) } : {},
+  );
+  const sentBefore = privacy.recent().length;
   const tools = toolsForRun({ disabled: args.tools === 'short' ? SHORT_TOOLS_OFF : [], vision: profile.vision });
   const abort = new AbortController();
-  const timer = setTimeout(() => abort.abort(), 5 * 60_000);
+  const timer = setTimeout(() => abort.abort(), (args.runTimeoutS ?? 300) * 1000);
   const loop = new MeasuredLoop({
     conversationId: conversation.id,
     runId: 'eval',
@@ -240,6 +258,13 @@ async function runOne(
       : undefined,
     answer: answer.slice(0, 600),
     calls: calls.map(c => `${c.name} ${c.args}`.slice(0, 160)),
+    // What the privacy layer did on this run's requests: tags issued, images sent or withheld, blocked requests.
+    privacy: args.privacy
+      ? {
+          requests: privacy.recent().slice(sentBefore),
+          vaultSize: privacy.vault.size,
+        }
+      : undefined,
   };
 }
 
