@@ -60,7 +60,7 @@ HTTP = httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=900.0, write=6
 
 KEEP_HEADERS = {"user-agent", "origin", "anthropic-version", "anthropic-beta",
                 "x-redaction-scheme", "x-stainless-package-version", "x-stainless-lang",
-                "openai-organization", "content-type"}
+                "openai-organization", "content-type", "x-trace-id"}
 
 
 async def fetch_available_models() -> list[str]:
@@ -190,7 +190,8 @@ def summarize(oa_req: dict, oa_resp: dict | None) -> dict:
 
 def _list_item(r: dict) -> dict:
     return {k: r.get(k) for k in ("id", "seq", "ts", "api", "path", "agent", "model", "stream",
-                                  "status", "latency_ms", "error", "summary", "state", "shim")}
+                                  "status", "latency_ms", "error", "summary", "state", "shim",
+                                  "trace_id", "trace_error")}
 
 
 async def _broadcast(kind: str, rec: dict) -> None:
@@ -205,10 +206,14 @@ async def _broadcast(kind: str, rec: dict) -> None:
 async def start_record(api: str, request: Request, client_body: dict, oa_req: dict) -> dict:
     global COUNTER
     COUNTER += 1
+    # Propagate the client's trace ID so every proxy record can be joined to the
+    # extension's in-memory trace by the same key.
+    trace_id = request.headers.get("x-trace-id")
     rec = {
         "id": uuid.uuid4().hex[:12],
         "seq": COUNTER,
         "ts": dt.datetime.now().isoformat(timespec="milliseconds"),
+        "trace_id": trace_id,
         "api": api,
         "path": request.url.path,
         "headers": {k: v for k, v in request.headers.items() if k.lower() in KEEP_HEADERS},
@@ -225,6 +230,7 @@ async def start_record(api: str, request: Request, client_body: dict, oa_req: di
         "status": None,
         "latency_ms": None,
         "error": None,
+        "trace_error": None,
         "summary": summarize(oa_req, None),
         "_t0": time.perf_counter(),
     }
@@ -238,6 +244,14 @@ async def start_record(api: str, request: Request, client_body: dict, oa_req: di
     return rec
 
 
+def _make_trace_error(source: str, message: str, status: int | None = None) -> dict:
+    """Builds a trace_error record that mirrors the client-side ERROR TraceEvent shape."""
+    out: dict = {"source": source, "message": message[:500]}
+    if status is not None:
+        out["status"] = status
+    return out
+
+
 async def finish_record(rec: dict, oa_req: dict, status: int, upstream_resp: dict | None,
                         client_resp: Any = None, error: str | None = None) -> None:
     rec["latency_ms"] = round((time.perf_counter() - rec.pop("_t0")) * 1000)
@@ -247,6 +261,11 @@ async def finish_record(rec: dict, oa_req: dict, status: int, upstream_resp: dic
     rec["error"] = error
     rec["state"] = "error" if error or status >= 400 else "done"
     rec["summary"] = summarize(oa_req, upstream_resp)
+    # Promote raw errors into a structured trace_error so they can be joined with the
+    # client-side ERROR events that share the same trace_id.
+    if error or status >= 400:
+        source = "PROXY_UPSTREAM" if status >= 400 else "PROXY_STREAM"
+        rec["trace_error"] = _make_trace_error(source, error or f"HTTP {status}", status)
     if rec.get("shim") and isinstance(client_resp, dict) and client_resp.get("choices"):
         rec["summary"]["tool_calls"] = summarize(oa_req, client_resp)["tool_calls"]
     with SESSION_FILE.open("a") as f:
@@ -569,6 +588,8 @@ async def get_record(rid: str):
     if not r:
         return JSONResponse({"error": "not found"}, status_code=404)
     return {k: v for k, v in r.items() if not k.startswith("_")}
+
+
 
 
 @app.post("/_api/clear")
