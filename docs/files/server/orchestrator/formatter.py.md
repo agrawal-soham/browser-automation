@@ -9,3 +9,5 @@
 **Used by.** main.py
 
 **Changed after the first use from Chrome.** `navigate` → Nanobrowser's `navigate {url}`.
+
+**Changed (2026-10-18).** `dialog` maps to the layer's `handle_dialog {accept, promptText?}`.

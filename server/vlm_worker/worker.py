@@ -45,7 +45,7 @@ class Worker:
             log.warning("refused %s: wrong token", peer)
             await ws.close(code=4403, reason="bad token")
             return
-        await ws.send(AuthOk(model=self.model.name).model_dump_json())
+        await ws.send(AuthOk(model=self.model.name, capabilities=self.model.capabilities).model_dump_json())
         log.info("orchestrator connected from %s", peer)
         try:
             async with asyncio.TaskGroup() as jobs:
@@ -85,8 +85,11 @@ def tls_context(cert: str, key: str) -> ssl.SSLContext:
 
 async def serve(host: str, port: int, ssl_ctx: ssl.SSLContext | None, token: str) -> None:
     worker = Worker(token, VlmModel())
+    # Before the first connection: whether the model can point at elements, and in which coordinates (grounding.py).
+    await worker.model.calibrate()
     async with websockets.serve(worker.handle, host, port, ssl=ssl_ctx, max_size=MAX_MESSAGE_BYTES, ping_interval=20):
-        log.info("VLM worker on %s://%s:%d with %s", "wss" if ssl_ctx else "ws", host, port, worker.model.name)
+        log.info("VLM worker on %s://%s:%d with %s (jobs: perceive, verify, chat%s)", "wss" if ssl_ctx else "ws", host,
+                 port, worker.model.name, "".join(f", {c}" for c in worker.model.capabilities))
         await asyncio.Future()
 
 

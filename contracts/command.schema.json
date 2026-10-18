@@ -28,7 +28,8 @@
         "scroll",
         "ask_user",
         "done",
-        "press"
+        "press",
+        "dialog"
       ],
       "title": "Action",
       "type": "string"
@@ -146,6 +147,19 @@
       ],
       "default": null,
       "title": "Keys"
+    },
+    "accept": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "dialog: true for OK or Accept, false for Cancel or Dismiss",
+      "title": "Accept"
     },
     "outcome": {
       "anyOf": [

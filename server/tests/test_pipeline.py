@@ -278,6 +278,7 @@ def form_body(steps):
 class FakeLink:
     connected = enabled = True
     model = "fake-vl"
+    capabilities: set = set()
     last_error = ""
 
     def __init__(self, text, verdict=None, answers=True):
@@ -648,3 +649,60 @@ def test_a_visual_click_goes_through_the_grid_and_the_marker_check():
     no = FakeLink(['{"cell": "A2"}', '{"square": 8}'] * 3, verdict={"ok": False, "reason": "the marker is on the Name Box"})
     r = run(form_body(plain), [a1] * 3, no)
     assert r.command.action == "ask_user" and any("Name Box" in n for n in r.notes)
+
+
+IRCTC_SUGGESTIONS = (
+    "snapshot · tab 5\n"
+    'form "Book ticket"\n'
+    '  [it11] combobox "From" (expanded) = "Lucknow"\n'
+    '    listbox "Stations"\n'
+    '      [it40] option "LUCKNOW NR - LKO"\n'
+    '      [it41] option "LUCKNOW JN - LJN"\n'
+    '  [it14] combobox "To"\n'
+    '  [it25] button "Search Trains"'
+)
+
+
+def test_typing_into_a_field_that_suggests_shows_the_choices():
+    from orchestrator.prompt import decide_messages
+    from orchestrator.turn import CHOICES_INTENT
+
+    outline = IRCTC.replace('[it1] dialog "Alert" (modal)', 'region "Banner"')
+    typed = ("set", {"target": {"ref": "it11"}, "value": "Lucknow"}, 'set · combobox «From» · dispatched\nexpect: met · value «Lucknow»')
+    steps = [("snapshot", {}, outline), ("screenshot", {}, SHOT), typed]
+
+    def body(extra=()):
+        b = agent_body(steps + list(extra), task="search trains from Lucknow to Kanpur on irctc")
+        b["tools"] = TOOLS + [{"type": "function", "function": {"name": n, "parameters": {}}} for n in ("screenshot", "wait")]
+        return b
+
+    link = FakeLink("{}")
+    # The value was read back, but the list it opened is only in a new outline: settle, then look again.
+    settled = ("wait", {"settled": True}, "wait · met: page settled after 300 ms")
+    r = run(body([settled]), [], link)
+    assert r.own_call == ("snapshot", {"intent": CHOICES_INTENT})
+    # The same page: no page picture for the VLM; the model sees the options and must pick one first.
+    turn = parse(body([settled, ("snapshot", {"intent": CHOICES_INTENT}, IRCTC_SUGGESTIONS)]))
+    assert not turn.needs_snapshot() and not turn.needs_screenshot()
+    assert turn.open_choices().options == ['[it40] option "LUCKNOW NR - LKO"', '[it41] option "LUCKNOW JN - LJN"']
+    prompt = decide_messages(turn, None, [], 12000)[1]["content"]
+    assert "A LIST OF CHOICES IS OPEN" in prompt and "[it40]" in prompt
+    skipped = check({"action": "type", "ref": "it14", "value": "Kanpur", "reason": "r"}, turn)
+    assert skipped.command is None and "it40" in skipped.problems[0]
+    assert check({"action": "click", "ref": "it40", "reason": "Lucknow NR"}, turn).command
+    # A plain text field opens nothing: no extra outline.
+    plain = parse(agent_body([("snapshot", {}, OUTLINE), ("set", {"target": {"ref": "e3"}, "value": "x"}, "expect: met")]))
+    assert not plain.needs_snapshot()
+
+
+def test_a_browser_dialog_is_answered_with_handle_dialog():
+    pending = "error MODAL_PENDING\nA dialog opened (confirm «Delete this question?»). The click was dispatched."
+    turn = parse(agent_body([("snapshot", {}, FORM), ("click", {"target": {"ref": "bo46"}}, pending)]))
+    assert turn.js_dialog_open()
+    blocked = check({"action": "click", "ref": "bo52", "reason": "r"}, turn)
+    assert blocked.command is None and '"dialog"' in blocked.problems[0]
+    ok = check({"action": "dialog", "accept": True, "reason": "confirm the delete"}, turn)
+    assert ok.command and formatter.to_tool_call(ok.command) == ("handle_dialog", {"accept": True, "intent": "confirm the delete"})
+    # Without a browser dialog, "dialog" is refused: a dialog in the outline is clicked.
+    calm = parse(agent_body([("snapshot", {}, FORM)]))
+    assert check({"action": "dialog", "accept": False, "reason": "r"}, calm).command is None

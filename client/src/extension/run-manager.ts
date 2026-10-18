@@ -50,7 +50,7 @@ import { addPromptRoute, controllerReady } from './layer';
 import { Permissions } from './permissions';
 import { PromptBroker } from './prompt-broker';
 import { notifyFinished, notifyNeeds } from './notify';
-import { thumbnail } from './thumbnail';
+import { modelImage, thumbnail } from './thumbnail';
 import { isNumberedCopy, saveText } from './downloads';
 import { checkSave } from '@src/agent/save-file';
 import { conversationMarkdown, exportName } from '@src/agent/export';
@@ -1318,6 +1318,7 @@ export class RunManager {
           emit: event => this.emit(conversationId, event),
           turnCap: settings.turnCap,
           thumbnail,
+          modelImage,
           agentTool: (call, signal) => this.#agentTool(conversationId, call, signal),
           restore: restore ? { debt: restore.debt as DebtEntry[], guards: restore.guards } : undefined,
           takeSteering: () => {

@@ -7,6 +7,9 @@ canvas, an icon, a popup button without markup) and for a ref click that keeps f
   3. The sub-cell's centre, in CSS pixels, is the point. step.py then has the VLM check it on the screenshot with a marker
      (verify.py); its no blocks the click.
 
+When the worker's model can point at elements itself (a grounding model such as UI-TARS-1.5, "locate" in its
+capabilities), one `locate` job replaces steps 1 and 2; the grid stays the fallback when it finds nothing.
+
 The layer turns the point into the element there and applies the same checks and confirmations as to a ref.
 """
 
@@ -14,7 +17,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from ..imaging import GRID_COLS, GRID_ROWS, draw_grid, parse_cell, to_css, zoom_cell
+from ..imaging import GRID_COLS, GRID_ROWS, draw_grid, image_size, parse_cell, to_css, zoom_cell
 from ..turn import Turn
 from ..vlm_link import VlmLink
 from .recover import parse_location
@@ -28,6 +31,12 @@ class GridHit:
     cell: str
     sub: int
     seen: str
+    # How the point was found: "locate" (one grounding job) or "grid".
+    how: str = "grid"
+
+    @property
+    def where(self) -> str:
+        return "located by the vision model" if self.how == "locate" else f"grid {self.cell}, square {self.sub}"
 
 
 def cell_prompt(description: str) -> str:
@@ -55,6 +64,29 @@ async def locate_on_grid(description: str, turn: Turn, link: VlmLink) -> tuple[G
     """The point of `description` on the latest screenshot, or None and why not."""
     if not turn.image_b64:
         return None, "no screenshot"
+    missed = ""
+    if "locate" in link.capabilities:
+        hit, missed = await locate(description, turn, link)
+        if hit:
+            return hit, ""
+    hit, why = await on_grid(description, turn, link)
+    return hit, f"{why} (locate: {missed})" if missed and not hit else why
+
+
+async def locate(description: str, turn: Turn, link: VlmLink) -> tuple[GridHit | None, str]:
+    """One grounding job: the worker's model points at the element (fractions of the image)."""
+    reply = await link.run("locate", description, turn.image_b64)
+    if reply is None:
+        return None, link.last_error or "no answer"
+    result = reply.result or {}
+    if "x" not in result or "y" not in result:
+        return None, f"no point in the answer ({str(result.get('text', ''))[:120]})"
+    width, height = image_size(turn.image_b64 or "")
+    x, y = to_css(float(result["x"]) * width, float(result["y"]) * height, turn.image_scale)
+    return GridHit(x, y, "", 0, str(result.get("raw", "")), how="locate"), ""
+
+
+async def on_grid(description: str, turn: Turn, link: VlmLink) -> tuple[GridHit | None, str]:
     reply = await link.run("chat", cell_prompt(description), draw_grid(turn.image_b64))
     if reply is None:
         return None, link.last_error or "no answer"

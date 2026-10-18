@@ -37,6 +37,8 @@ class VlmLink:
     def __init__(self, settings: Settings):
         self.settings = settings
         self.model: str | None = None
+        # Extra jobs the worker's model can do ("locate": point at a described element).
+        self.capabilities: set[str] = set()
         self._ws: websockets.ClientConnection | None = None
         self._pending: dict[str, asyncio.Future[JobResult]] = {}
         self._task: asyncio.Task | None = None
@@ -92,9 +94,10 @@ class VlmLink:
             await ws.send(Auth(token=self.settings.vlm_token).model_dump_json())
             ok = AuthOk.model_validate_json(await asyncio.wait_for(ws.recv(), 10))
             self.model = ok.model
+            self.capabilities = set(ok.capabilities)
             self._ws = ws
             self._ready.set()
-            log.info("VLM link up (%s)", ok.model)
+            log.info("VLM link up (%s; extra jobs: %s)", ok.model, ", ".join(sorted(self.capabilities)) or "none")
             async for raw in ws:
                 reply = JobResult.model_validate_json(raw)
                 fut = self._pending.pop(reply.id, None)

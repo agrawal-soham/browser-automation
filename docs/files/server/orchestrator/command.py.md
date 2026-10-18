@@ -13,3 +13,5 @@
 **Changed (2026-10-18, real runs).** `press` (server-only, never offered to the model) and `ask_kind` (input or takeover).
 
 **Changed (2026-10-18).** `visual`: what to click as it looks, when the outline has no ref for it. `point` is set only by the server's grid. `contracts/command.schema.json` regenerated (it also lacked `press` and `ask_kind`).
+
+**Changed (2026-10-18).** New action `dialog` with `accept` (and `value` for a prompt): the answer to a JavaScript alert/confirm/prompt. `contracts/command.schema.json` regenerated.

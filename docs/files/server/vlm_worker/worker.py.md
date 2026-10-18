@@ -13,3 +13,5 @@
 **Changed after the E2E runs.** A dropped connection is logged as a disconnect, not a traceback.
 
 **Changed for Windows.** `--token-file` reads the token from a file (a Notepad byte-order mark and newline are stripped), in place of the VLM_TOKEN variable.
+
+**Changed (2026-10-18).** Calibrates before serving and sends the model's capabilities in `AuthOk`.

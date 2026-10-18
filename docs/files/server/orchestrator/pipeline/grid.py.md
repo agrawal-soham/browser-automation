@@ -7,3 +7,6 @@
 **Depends on.** imaging.py (`draw_grid`, `zoom_cell`, `parse_cell`, `to_css`), recover.py (`parse_location`), vlm_link.py
 
 **Used by.** pipeline/step.py (a `visual` click from the model or from the ladder's grid rung), which then checks the point with a marker (verify.py) before the click goes out.
+
+**Changed (2026-10-18, UI-TARS).** When the worker offers `locate`, one grounding call gives the point (fractions of
+the image, turned into CSS pixels); the chessboard grid is the fallback. `GridHit.how` says which was used.
