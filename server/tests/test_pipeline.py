@@ -720,3 +720,16 @@ def test_a_press_that_worked_is_not_repeated():
     assert check({"action": "click", "ref": "bo46", "reason": "r"}, after_ask).command is None
     many = parse(agent_body([("snapshot", {}, FORM), pressed], task="Click the Add question button 3 times."))
     assert check({"action": "click", "ref": "bo46", "reason": "r"}, many).command
+
+
+def test_no_going_back_to_the_start_page_of_the_open_site():
+    opened = ("navigate", {"url": "https://www.dominos.co.in/"}, "navigate · new document «https://www.dominos.co.in/»")
+    b = agent_body([opened, ("snapshot", {}, FORM)], task="open https://www.dominos.co.in/ and order 4 pizzas")
+    b["messages"][1]["content"].append(
+        {"type": "text", "text": "<browser-state>\nactive tab: [1] «Menu» «https://www.dominos.co.in/menu»\n</browser-state>"})
+    turn = parse(b)
+    again = check({"action": "navigate", "url": "https://www.dominos.co.in", "reason": "not the main site"}, turn)
+    assert again.command is None and "Go on from this page" in again.problems[0]
+    # Another page of the site, or another site, is still allowed.
+    assert check({"action": "navigate", "url": "https://www.dominos.co.in/cart", "reason": "r"}, turn).command
+    assert check({"action": "navigate", "url": "https://www.youtube.com", "reason": "r"}, turn).command

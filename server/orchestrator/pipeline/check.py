@@ -177,6 +177,30 @@ def untyped_task_tags(turn: Turn) -> list[str]:
     return seen
 
 
+def _host_path(url: str) -> tuple[str, str]:
+    m = re.match(r"^(?:https?://)?(?:www\.)?([^/?#]+)([^?#]*)", url.strip().lower())
+    return (m.group(1), m.group(2).rstrip("/")) if m else ("", "")
+
+
+def _back_to_start(cmd: Command, turn: Turn) -> str | None:
+    """Going back to a site's start page while already further in on that site, after this request opened it: the Domino's
+    runs (2026-10-18) did it eight times ("the current tab is not the main website"), undoing each step."""
+    if cmd.action != "navigate" or not cmd.url:
+        return None
+    host, path = _host_path(cmd.url)
+    here_host, here_path = _host_path(turn.active_url)
+    if not host or host != here_host or path or not here_path:
+        return None
+    opened = any(
+        s.name == "navigate" and _host_path(str(_args(s).get("url", "")))[0] == host
+        for s in turn.steps[turn.request_start :]
+    )
+    if not opened:
+        return None
+    return (f"You are already on {host} ({here_path}): the site took you further after it was opened. Go on from this "
+            "page; opening the start page again undoes that.")
+
+
 def _same_url(a: str, b: str) -> bool:
     norm = lambda u: re.sub(r"^https?://(www\.)?", "", u.strip().lower()).rstrip("/")  # noqa: E731
     return bool(a and b) and norm(a) == norm(b)
@@ -202,6 +226,9 @@ def repeated(cmd: Command, turn: Turn) -> str | None:
     if cmd.action == "navigate" and cmd.url and _same_url(cmd.url, turn.active_url):
         return (f"{cmd.url} is already the active tab. If that is what the request asked for, answer done; "
                 "otherwise act on the page.")
+    back = _back_to_start(cmd, turn)
+    if back:
+        return back
     last = turn.last_action()
     if last is None:
         return None
