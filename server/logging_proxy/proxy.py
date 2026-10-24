@@ -84,7 +84,7 @@ def resolve_model(requested_model: str | None) -> str:
         return req
     if req and not req.lower().startswith("claude") and req not in ("default", "local-model", ""):
         return req
-    for pref in ("qwen2.5vl:7b", "gemma3:4b-16k", "gemma3:4b", "qwen2.5-vl-7b", "qwen3:16k"):
+    for pref in ("qwen3:8b", "qwen2.5vl:7b", "gemma3:4b-16k", "gemma3:4b", "qwen2.5-vl-7b", "qwen3:16k"):
         if pref in AVAILABLE_MODELS:
             return pref
     if AVAILABLE_MODELS:

@@ -11,6 +11,20 @@ import json
 import time
 from pathlib import Path
 
+from .turn import Turn
+
+
+def observation_diagnostics(turn) -> dict:
+    """Keep bounded, already-redacted browser receipts, never image bytes."""
+    steps = turn.steps[turn.request_start:]
+    errors = [s for s in steps if s.result.startswith("error") or Turn.failed(s)]
+    last = steps[-1] if steps else None
+    return {
+        "last_observation": ({"tool": last.name, "call_id": last.call_id, "result": last.result[:1200],
+                              "image_present": last.image_present} if last else None),
+        "browser_errors": [{"tool": s.name, "call_id": s.call_id, "result": s.result[:1200]} for s in errors[-8:]],
+    }
+
 
 class RequestLog:
     def __init__(self, directory: Path):

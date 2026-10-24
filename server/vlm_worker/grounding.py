@@ -22,11 +22,21 @@ CONVENTIONS = ("resized:1003520", "pixels", "norm1000", "norm1")
 
 def family(model: str) -> str:
     name = model.lower()
+    if "gemma" in name:
+        return "gemma"
     if "ui-tars" in name or "uitars" in name:
         return "ui-tars"
     if "qwen2.5vl" in name or "qwen2.5-vl" in name or "qwen3-vl" in name or "qwen3vl" in name:
         return "qwen-vl"
     return "other"
+
+
+# gemma4 answers in 0-1000 fractions only; trying "pixels" first would accept a wrong fit by chance.
+CONVENTIONS_BY_FAMILY = {"gemma": ("norm1000",)}
+
+
+def conventions(model: str) -> tuple[str, ...]:
+    return CONVENTIONS_BY_FAMILY.get(family(model), CONVENTIONS)
 
 
 def locate_prompt(model: str, description: str) -> str:
@@ -35,6 +45,15 @@ def locate_prompt(model: str, description: str) -> str:
         return (
             "Output only the coordinate of one point in your response. "
             f"What element matches the following task: {description}"
+        )
+    if family(model) == "gemma":
+        # Measured on gemma4:latest (2026-10-24): it answers {"point_2d": [x, y]} in 0-1000 fractions of the image,
+        # accurate in y, sometimes 70-300 px off in x. Saying the scale outright keeps the answer in one convention.
+        return (
+            f"Find this on the screenshot: {description}\n"
+            "Grey boxes hide personal data on purpose; ignore them.\n"
+            'Answer only with JSON: {"point_2d": [x, y]} with x and y integers from 0 to 1000 '
+            "(fractions of the image width and height), the centre of it."
         )
     return (
         f"Find this on the screenshot: {description}\n"
@@ -119,12 +138,12 @@ def calibration_image() -> str:
     return base64.b64encode(out.getvalue()).decode()
 
 
-def pick_convention(point: tuple[float, float]) -> str | None:
+def pick_convention(point: tuple[float, float], model: str = "") -> str | None:
     """The first convention that puts the calibration answer on the target (with a small margin), or None."""
     w, h = CALIBRATION_SIZE
     left, top, right, bottom = CALIBRATION_TARGET
     margin = 15
-    for convention in CONVENTIONS:
+    for convention in conventions(model):
         fx, fy = to_fraction(point, convention, w, h)
         x, y = fx * w, fy * h
         if left - margin <= x <= right + margin and top - margin <= y <= bottom + margin:

@@ -30,7 +30,7 @@ Nanobrowser ──(Anthropic /v1/messages)────────┘        │
 ```bash
 cd server/logging_proxy
 
-# 1. Start with Ollama (defaults to qwen2.5vl:7b or gemma3:4b-16k)
+# 1. Start with Ollama (defaults to qwen3:8b)
 ./run_ollama.sh qwen2.5vl:7b
 
 # Or for dry runs without a GPU:

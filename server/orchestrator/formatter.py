@@ -19,6 +19,11 @@ def to_tool_call(cmd: Command) -> tuple[str, dict]:
     """The Nanobrowser tool and its arguments for one command. `intent` is shown to the user and kept in the audit log."""
     intent = {"intent": cmd.reason[:500]} if cmd.reason else {}
     target = {"ref": cmd.ref} if cmd.ref else ({"x": cmd.point.x, "y": cmd.point.y} if cmd.point else None)
+    if cmd.action == "read":
+        return "read", {"format": "markdown", "offset": cmd.offset, "maxChars": 6000,
+                        **({"ref": cmd.ref} if cmd.ref else {}), **intent}
+    if cmd.action == "find":
+        return "find", {"text": cmd.query or "", "limit": 50, **intent}
     if cmd.action == "navigate":
         return "navigate", {"url": cmd.url or "", **intent}
     if cmd.action == "click":

@@ -17,6 +17,65 @@
       ],
       "title": "Point",
       "type": "object"
+    },
+    "Progress": {
+      "properties": {
+        "facts": {
+          "items": {
+            "$ref": "#/$defs/ProgressFact"
+          },
+          "maxItems": 24,
+          "title": "Facts",
+          "type": "array"
+        },
+        "target_url": {
+          "default": "",
+          "maxLength": 2048,
+          "title": "Target Url",
+          "type": "string"
+        },
+        "complete": {
+          "default": false,
+          "title": "Complete",
+          "type": "boolean"
+        }
+      },
+      "title": "Progress",
+      "type": "object"
+    },
+    "ProgressFact": {
+      "properties": {
+        "criterion": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Criterion",
+          "type": "string"
+        },
+        "subject_url": {
+          "maxLength": 2048,
+          "title": "Subject Url",
+          "type": "string"
+        },
+        "source": {
+          "maxLength": 32,
+          "title": "Source",
+          "type": "string"
+        },
+        "quote": {
+          "maxLength": 1000,
+          "minLength": 4,
+          "title": "Quote",
+          "type": "string"
+        }
+      },
+      "required": [
+        "criterion",
+        "subject_url",
+        "source",
+        "quote"
+      ],
+      "title": "ProgressFact",
+      "type": "object"
     }
   },
   "properties": {
@@ -29,7 +88,9 @@
         "ask_user",
         "done",
         "press",
-        "dialog"
+        "dialog",
+        "read",
+        "find"
       ],
       "title": "Action",
       "type": "string"
@@ -195,6 +256,50 @@
       "description": "one short sentence: why this action",
       "title": "Reason",
       "type": "string"
+    },
+    "revisit_reason": {
+      "anyOf": [
+        {
+          "maxLength": 300,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Revisit Reason"
+    },
+    "progress": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Progress"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "offset": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Offset",
+      "type": "integer"
+    },
+    "query": {
+      "anyOf": [
+        {
+          "maxLength": 500,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "find: text to locate in the whole document",
+      "title": "Query"
     }
   },
   "required": [

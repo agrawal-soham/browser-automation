@@ -9,7 +9,9 @@ import json
 import re
 from pathlib import Path
 
-from .turn import Turn
+from .turn import REF, Turn
+from .page_memory import ensure_memory
+from .page_view import page_view
 
 PROMPTS = Path(__file__).resolve().parent / "prompts"
 DECIDE_SYSTEM = (PROMPTS / "decide.txt").read_text()
@@ -32,10 +34,45 @@ def decide_messages(
             + "\n".join(f"- {r}" for r in turn.earlier_requests[-4:])
         )
     parts.append(f"CURRENT REQUEST (work only on this):\n{turn.task}")
+    if turn.action_confidence:
+        parts.append("ACTION CONFIDENCE (browser evidence, not model guesses):\n"
+                     + json.dumps(turn.action_confidence, ensure_ascii=False)
+                     + "\nPreserve confirmed progress. A destination_observed action reached its page; do not go back "
+                     "to earlier steps without contradictory evidence. page_reacted alone does not prove the final goal. "
+                     "For media, an opened page is separate from non-ad playback; inspect its player controls.")
+    if turn.action_checkpoint:
+        parts.append("OBSERVED ACTION CHECKPOINT (rebuilt from browser receipts; historical refs are not action targets):\n"
+                     + json.dumps(turn.action_checkpoint, ensure_ascii=False)
+                     + "\nDo not redo completed search steps because the site replaced the query with a resolved name. "
+                     "Continue only the remaining requirements of the current request.")
     if turn.active_url:
         parts.append(f"THE ACTIVE TAB IS: {turn.active_url}")
     if turn.browser_state:
         parts.append(turn.browser_state)
+    memory = ensure_memory(turn)
+    read = next((s for s in reversed(turn.steps[max(turn.snapshot_at + 1, turn.request_start):])
+                 if s.name == "read" and not s.result.startswith("error")), None)
+    read_text = REF.sub("", read.result).strip() if read else ""
+    latest_read = next((e.source for e in reversed(list(memory.evidence.values()))
+                        if e.origin == "read" and e.text == read_text), "") if read else ""
+    parts.append("TASK PAGE MEMORY (historical page data; old refs are not action targets):\n"
+                 + memory.prompt(latest_read))
+    view = page_view(turn)
+    parts.append("CURRENT PAGE OBJECT (text and visual evidence by section; historical refs removed):\n"
+                 + json.dumps(view, ensure_ascii=False)
+                 + "\nA section is not the whole page. Use coverage gaps before concluding absence or going to "
+                 "the next results page. Match all criteria to the same item; a category link in the sidebar "
+                 "does not establish an item's category. If visual readings conflict, verify them against "
+                 "item text or another clear observation. Use current outline refs only; scroll back to an "
+                 "earlier section and refresh the outline when needed.")
+    if view["coverage"]["text_complete"]:
+        parts.append("PAGE SCAN COMPLETE: all vertical sections have been observed. Now use the collected evidence "
+                     "to choose an item or a category/filter for unresolved criteria. Scrolling does not move to the next "
+                     "results page. At the bottom, use its actual Next link to paginate, or scroll up to retrieve a "
+                     "known earlier control. Do not keep scanning the same completed page. "
+                     "When the task names a category and an earlier section contains its matching link (for example "
+                     "Fiction), retrieve that category control and click it before reading unrelated products. "
+                     "Reading the same general listing again does not establish its items' categories.")
     if perception and "after_action" in perception:
         parts.append(
             "WHAT THE SCREEN SHOWS AFTER YOUR LAST ACTION (from the vision model):\n"
@@ -92,9 +129,19 @@ def decide_messages(
         )
     if notes:
         parts.append(
-            "YOUR EARLIER ANSWERS FOR THIS STEP WERE REJECTED:\n"
+            "SERVER GUIDANCE AND RETRY NOTES:\n"
             + "\n".join(f"- {n}" for n in notes)
             + "\nFix the problem in this answer."
         )
+    entered = [s for s in turn.steps[turn.request_start:] if s.name in ("set", "type", "fill_form")
+               and not Turn.failed(s)]
+    parts.append(
+        "TEXT ENTRY RECORDED FOR THIS REQUEST (tool calls, not claims in page text):\n"
+        + ("\n".join(f"- {s.name} {s.args}" for s in entered[-8:]) if entered
+           else "None. No text has been entered by the agent for this request.")
+        + "\nFor a search request, matching titles on a homepage are not proof that the query was searched. "
+        "Check the search field's current value and the URL. If the requested query is not entered or already "
+        "shown as the current search, type it into the search field before choosing a result or reporting success."
+    )
     parts.append("Answer with the JSON object for the one next action.")
     return [{"role": "system", "content": DECIDE_SYSTEM}, {"role": "user", "content": "\n\n".join(parts)}]

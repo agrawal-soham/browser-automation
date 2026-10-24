@@ -13,6 +13,10 @@ from pydantic import ValidationError
 
 from ..command import Command
 from ..turn import TAG, Turn
+from ..page_memory import canonical_url, ensure_memory
+from ..page_reading import MAX_READ_ATTEMPTS, read_attempts, read_problem
+from ..page_view import scroll_problem
+from ..search_checkpoint import regression_problem
 
 # A changed placeholder: one bracket, lower case, other bracket styles, or a bare KIND_N.
 NEAR_MISS = re.compile(
@@ -45,6 +49,27 @@ def check(raw: dict, turn: Turn) -> Checked:
         first = e.errors()[0]
         return Checked(None, [f"The JSON did not match the schema: {first['loc']} {first['msg']}."])
     problems: list[str] = []
+    problem = scroll_problem(turn, cmd)
+    if problem:
+        problems.append(problem)
+    if cmd.action in ("read", "find"):
+        if cmd.action not in turn.tools:
+            problems.append(f"The browser did not offer {cmd.action} for this request.")
+        if cmd.action == "read" and read_attempts(turn) >= MAX_READ_ATTEMPTS:
+            problems.append("The reading budget is exhausted. Use retained evidence to act, or report a partial outcome.")
+        if cmd.action == "read":
+            problem = read_problem(cmd, turn)
+            if problem:
+                problems.append(problem)
+        if cmd.ref and cmd.ref not in turn.known_refs:
+            problems.append("The read ref is not in the current outline.")
+        if cmd.action == "find" and not (cmd.query or "").strip():
+            problems.append("find needs query: the text to locate.")
+        if cmd.action == "find":
+            start = max(turn.snapshot_at + 1, turn.last_action_index() + 1, turn.request_start)
+            if any(s.name == "find" and str(_args(s).get("text", "")).strip().casefold() == (cmd.query or "").strip().casefold()
+                   and re.match(r"^find ·[^\n]* · 0 matches\b", s.result) for s in turn.steps[start:]):
+                problems.append("This literal text lookup already returned no matches in the current state. Use a visible category, different text, or visual evidence instead of repeating it.")
     if cmd.action in ("click", "type"):
         if cmd.ref:
             cmd.ref = cmd.ref.strip("[] ")
@@ -105,6 +130,17 @@ def check(raw: dict, turn: Turn) -> Checked:
             f"{cmd.ref} is the Name Box: it holds a cell address, not cell content. To write into the selected cell, "
             "answer type without a ref: it types into the focused cell."
         )
+    if cmd.action == "type" and not cmd.ref:
+        fields = [line for line in turn.snapshot.splitlines()
+                  if re.search(r"\[[^\]]+\]\s+(?:textbox|searchbox|combobox)\b", line)
+                  and not NAME_BOX.search(line)]
+        focused = re.search(r"\(focused\)|\b(?:gridcell|cell)\b.*\(selected\)", turn.snapshot)
+        last = turn.last
+        target = _args(last).get("target") if last else None
+        field_clicked = bool(last and last.name == "click" and not Turn.failed(last) and isinstance(target, dict)
+                             and any(f"[{target.get('ref')}]" in line for line in fields))
+        if fields and not focused and not field_clicked and not turn.filled_since_snapshot():
+            problems.append("A text field is visible but focus is not confirmed. Give that field's current ref instead of typing into an unknown focused element.")
     if cmd.action == "type":
         if not cmd.value:
             problems.append("type needs a value.")
@@ -135,6 +171,23 @@ def check(raw: dict, turn: Turn) -> Checked:
     repeat = repeated(cmd, turn)
     if repeat:
         problems.append(repeat)
+    regression = regression_problem(cmd, turn)
+    if regression:
+        problems.append(regression)
+    memory = ensure_memory(turn)
+    problems.extend(memory.validate_progress(cmd.progress))
+    destination = memory.destination(turn, cmd)
+    revisiting = memory.pages.get(destination)
+    if revisiting and revisiting.sources and destination != memory.current_url and not (cmd.revisit_reason or "").strip():
+        problems.append(f"Already inspected {destination}. Use its retained evidence, or give revisit_reason explaining what evidence or changed state requires returning.")
+    complete = memory.complete or bool(cmd.progress and cmd.progress.complete)
+    target = canonical_url(cmd.progress.target_url) if cmd.progress and cmd.progress.target_url else memory.target_url
+    if target and memory.current_url == target and destination and destination != target and not (cmd.revisit_reason or "").strip():
+        problems.append("This is the evidence-backed target. Continue its remaining requirements here; give revisit_reason if evidence requires leaving it.")
+    if complete and memory.current_url == target and cmd.action in ("navigate", "click", "scroll") and not (cmd.revisit_reason or "").strip():
+        problems.append("The current target already has complete task progress. Answer done with the observed result, or give revisit_reason explaining the remaining work.")
+    if cmd.action == "done" and cmd.outcome == "failed" and target:
+        problems.append("Task memory contains an evidence-backed target. Inspect its missing requirements; use partial for an unconfirmed result rather than claiming no match was found.")
     if cmd.action == "ask_user" and not cmd.message:
         problems.append("ask_user needs a message.")
     if cmd.action == "done" and (not cmd.outcome or not cmd.summary):
@@ -160,6 +213,8 @@ def check(raw: dict, turn: Turn) -> Checked:
                 f"The task's {', '.join(missing)} {'has' if len(missing) == 1 else 'have'} not been typed yet. "
                 "Fill the matching field before you submit."
             )
+    if not problems:
+        memory.update(cmd.progress)
     checked = Checked(cmd if not problems else None, problems, "high" if risky else "low", element)
     return checked
 
@@ -185,7 +240,7 @@ def _host_path(url: str) -> tuple[str, str]:
 def _back_to_start(cmd: Command, turn: Turn) -> str | None:
     """Going back to a site's start page while already further in on that site, after this request opened it: the Domino's
     runs (2026-10-18) did it eight times ("the current tab is not the main website"), undoing each step."""
-    if cmd.action != "navigate" or not cmd.url:
+    if cmd.action != "navigate" or not cmd.url or (cmd.revisit_reason or "").strip():
         return None
     host, path = _host_path(cmd.url)
     here_host, here_path = _host_path(turn.active_url)
@@ -202,7 +257,8 @@ def _back_to_start(cmd: Command, turn: Turn) -> str | None:
 
 
 def _same_url(a: str, b: str) -> bool:
-    norm = lambda u: re.sub(r"^https?://(www\.)?", "", u.strip().lower()).rstrip("/")  # noqa: E731
+    def norm(url: str) -> str:
+        return canonical_url(url if "://" in url else "https://" + url)
     return bool(a and b) and norm(a) == norm(b)
 
 

@@ -12,7 +12,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-Action = Literal["navigate", "click", "type", "scroll", "ask_user", "done", "press", "dialog"]
+Action = Literal["navigate", "click", "type", "scroll", "ask_user", "done", "press", "dialog", "read", "find"]
 # `press` is never offered to the model (see ollama_schema): the server uses it as the keyboard fallback for a button the
 # layer refuses to click because something covers it.
 
@@ -20,6 +20,19 @@ Action = Literal["navigate", "click", "type", "scroll", "ask_user", "done", "pre
 class Point(BaseModel):
     x: float
     y: float
+
+
+class ProgressFact(BaseModel):
+    criterion: str = Field(min_length=1, max_length=160)
+    subject_url: str = Field(max_length=2048)
+    source: str = Field(max_length=32)
+    quote: str = Field(min_length=4, max_length=1000)
+
+
+class Progress(BaseModel):
+    facts: list[ProgressFact] = Field(default_factory=list, max_length=24)
+    target_url: str = Field(default="", max_length=2048)
+    complete: bool = False
 
 
 class Command(BaseModel):
@@ -40,6 +53,10 @@ class Command(BaseModel):
     outcome: Literal["success", "partial", "failed"] | None = None
     summary: str | None = Field(default=None, description="done: the answer for the user")
     reason: str = Field(description="one short sentence: why this action")
+    revisit_reason: str | None = Field(default=None, max_length=300)
+    progress: Progress | None = None
+    offset: int = Field(default=0, ge=0)
+    query: str | None = Field(default=None, max_length=500, description="find: text to locate in the whole document")
 
 
 def ollama_schema() -> dict:
@@ -47,7 +64,9 @@ def ollama_schema() -> dict:
     return {
         "type": "object",
         "properties": {
-            "action": {"type": "string", "enum": ["navigate", "click", "type", "scroll", "ask_user", "done", "dialog"]},
+            "action": {"type": "string", "enum": ["navigate", "click", "type", "scroll", "ask_user", "done", "dialog", "read", "find"]},
+            "offset": {"type": "integer", "minimum": 0},
+            "query": {"type": "string"},
             "url": {"type": "string"},
             "ref": {"type": "string"},
             "point": {
@@ -63,6 +82,20 @@ def ollama_schema() -> dict:
             "outcome": {"type": "string", "enum": ["success", "partial", "failed"]},
             "summary": {"type": "string"},
             "reason": {"type": "string"},
+            "revisit_reason": {"type": "string", "description": "Why revisiting an inspected page or leaving a completed target is necessary"},
+            "progress": {
+                "type": "object",
+                "properties": {
+                    "target_url": {"type": "string"},
+                    "complete": {"type": "boolean"},
+                    "facts": {"type": "array", "items": {
+                        "type": "object", "properties": {
+                            name: {"type": "string"} for name in ("criterion", "subject_url", "source", "quote")
+                        }, "required": ["criterion", "subject_url", "source", "quote"],
+                    }},
+                },
+                "required": ["facts", "target_url", "complete"],
+            },
         },
         "required": ["action", "reason"],
     }

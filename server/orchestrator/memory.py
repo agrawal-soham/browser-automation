@@ -19,7 +19,7 @@ NAME) or to the words of the task they came from (slots), and element names that
 The server stays stateless: each replayed call says "(memory #12, step 3 of 7)" in its reason, which comes back in the
 next request's history and tells the server where the replay is.
 
-CLI: python -m orchestrator.memory list | show <host> | forget <host>
+CLI: python -m orchestrator.memory list | show <host> | lessons <host> | forget <host>
 """
 
 from __future__ import annotations
@@ -39,6 +39,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from .config import Settings
+from .failure_memory import FailureMemory
 from .turn import ACTIONS, DIALOG_LINE, REF, TAG, Step, Turn
 
 log = logging.getLogger("memory")
@@ -347,6 +348,7 @@ class SiteMemory:
         self.mode = settings.site_memory
         self.client = client or httpx.AsyncClient(timeout=30)
         self.db: sqlite3.Connection | None = None
+        self.failures = None
         if self.mode != "off":
             settings.memory_dir.mkdir(parents=True, exist_ok=True)
             self.db = sqlite3.connect(settings.memory_dir / "memory.sqlite3", check_same_thread=False)
@@ -356,6 +358,7 @@ class SiteMemory:
                 " UNIQUE(host, template))"
             )
             self.db.commit()
+            self.failures = FailureMemory(self.db)
         # Page descriptions from the vision model, by page fingerprint: stored with the step taken on that page.
         self.perceptions: dict[str, dict] = {}
         self._embed_warned = False
@@ -559,6 +562,7 @@ class SiteMemory:
         if not self.db:
             return 0
         n = self.db.execute("DELETE FROM playbooks WHERE host = ?", (host,)).rowcount
+        n += self.db.execute("DELETE FROM failure_lessons WHERE host IN (?, ?)", (host, "www." + host)).rowcount
         self.db.commit()
         return n
 
@@ -592,8 +596,13 @@ def main(argv: list[str]) -> int:
                 print(f"#{book.id} {book.template}")
                 for n, step in enumerate(book.steps, 1):
                     print(f"  {n}. {json.dumps({k: v for k, v in step.items() if k not in ('fingerprint',)}, ensure_ascii=False)}")
+    elif command == "lessons" and len(argv) > 1:
+        rows = memory.db.execute("SELECT tool,error,failures,scope FROM failure_lessons WHERE host IN (?, ?)"
+                                 " ORDER BY updated DESC", (argv[1], "www." + argv[1])).fetchall()
+        for tool, error, failures, state in rows:
+            print(f"{tool}: {error}, {failures} failures, page state {state}")
     elif command == "forget" and len(argv) > 1:
-        print(f"forgot {memory.forget(argv[1])} playbooks of {argv[1]}")
+        print(f"forgot {memory.forget(argv[1])} playbooks and failure lessons of {argv[1]}")
     else:
         print(__doc__.strip().splitlines()[-1])
         return 1

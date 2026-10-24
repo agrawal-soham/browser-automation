@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Run the logging proxy in front of Ollama.
-#   ./run_ollama.sh                 -> gemma3:4b-16k (default)
+#   ./run_ollama.sh                 -> qwen3:8b (default)
 #   ./run_ollama.sh qwen2.5vl:7b    -> any model from `ollama list`
 # Whatever model name Nanobrowser sends, the proxy forwards it as $MODEL.
 set -euo pipefail
 cd "$(dirname "$0")"
-MODEL="${1:-gemma3:4b-16k}"
+MODEL="${1:-qwen3:8b}"
 
 if ! curl -sf -m 2 http://127.0.0.1:11434/api/version >/dev/null; then
   echo "Ollama is not running on :11434. Start it with: sudo systemctl start ollama" >&2

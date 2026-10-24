@@ -89,6 +89,8 @@ class Step:
     name: str
     args: str
     result: str = ""
+    call_id: str = ""
+    image_present: bool | None = None
 
 
 @dataclass
@@ -118,6 +120,10 @@ class Turn:
     image_scale: float = 1.0
     tools: list[str] = field(default_factory=list)
     stream: bool = False
+    # Current-task page observations and evidence-backed progress (not site playbooks).
+    page_memory: Any = None
+    action_checkpoint: dict = field(default_factory=dict)
+    action_confidence: list[dict] = field(default_factory=list)
     # For chat requests: the messages as plain text.
     chat_system: str = ""
     chat_prompt: str = ""
@@ -144,6 +150,10 @@ class Turn:
             return True
         if self.snapshot_at < at and self.may_have_opened_choices(last):
             return True
+        # A read/find result can quote words such as "new document" as page content.
+        # Successful observations do not themselves navigate or invalidate refs.
+        if last.name in OBSERVATIONS and not last.result.startswith("error"):
+            return False
         return bool(STALE.search(last.result)) and last.name != "snapshot"
 
     @property
@@ -167,7 +177,7 @@ class Turn:
         or the start of the request."""
         landed = self.request_start - 1
         for i, step in enumerate(self.steps):
-            if i >= self.request_start and (step.name == "navigate" or NEW_PAGE.search(step.result)):
+            if i >= self.request_start and (step.name == "navigate" or (step.name not in OBSERVATIONS and NEW_PAGE.search(step.result))):
                 landed = i
         return not any(
             s.name == "screenshot" and PAGE_SHOT_INTENT in s.args and not s.result.startswith("error")
@@ -212,6 +222,17 @@ class Turn:
     def screenshot_is_stale(self) -> bool:
         """Something was done on the page after the latest screenshot (a verify would look at an old picture)."""
         return self.screenshot_at < len(self.steps) - 1 or self.image_b64 is None
+
+    def missing_screenshot_since(self, start: int) -> bool:
+        """The most recent picture attempted after this step returned no pixels."""
+        for i in range(len(self.steps) - 1, start, -1):
+            step = self.steps[i]
+            if step.name == "screenshot":
+                if i == self.screenshot_at and self.image_b64:
+                    return False  # Older clients attach these pixels in a following user message.
+                return (step.image_present is False or step.result.startswith("error")
+                        or (step.image_present is None and i == self.screenshot_at and not self.image_b64))
+        return False
 
     def needs_settle(self) -> bool:
         """The page was acted on since anything looked at it: let it finish loading before the next look."""
@@ -319,10 +340,13 @@ class Turn:
         """The steps since the latest navigate, or since the user last took over (ask_user): the actions on the page
         as it is now. Without the ask_user reset, a page that used up its failure budget kept asking the user to take
         over, again and again, after they had already fixed it (IRCTC, 2026-10-18)."""
-        for i in range(len(self.steps) - 1, -1, -1):
-            if self.steps[i].name in ("navigate", "ask_user"):
+        for i in range(len(self.steps) - 1, self.request_start - 1, -1):
+            step = self.steps[i]
+            receipt = step.result.split("<<<page-content", 1)[0]
+            if (step.name in ("navigate", "ask_user")
+                    or (step.name not in OBSERVATIONS and not self.failed(step) and NEW_PAGE.search(receipt))):
                 return self.steps[i + 1 :]
-        return self.steps
+        return self.steps[self.request_start:]
 
     def open_dialog(self) -> Dialog | None:
         """The dialog the latest outline shows on top of the page (the last one in the outline), if any."""
@@ -437,6 +461,7 @@ def parse(body: dict) -> Turn:
     turn = Turn(kind=kind, tools=tool_names(body), stream=bool(body.get("stream")))
     calls: dict[str, Step] = {}
     first_user = True
+    shot_step: Step | None = None  # a screenshot whose pixels may arrive in the user message right after its result
     for m in messages:
         role = m.get("role")
         content = m.get("content")
@@ -450,6 +475,9 @@ def parse(body: dict) -> Turn:
             images = _images(content)
             if images:
                 turn.image_b64 = images[-1]
+                if shot_step is not None:
+                    shot_step.image_present = True
+                    shot_step = None
             parts = _request_parts(content)
             if parts:
                 turn.request_start = len(turn.steps)
@@ -460,15 +488,22 @@ def parse(body: dict) -> Turn:
             elif plain and not plain.startswith("The following image"):
                 turn.user_notes.append(plain)
         elif role == "assistant":
+            shot_step = None
             for call in m.get("tool_calls") or []:
                 fn = call.get("function") or {}
-                step = Step(name=fn.get("name", ""), args=fn.get("arguments", ""))
+                step = Step(name=fn.get("name", ""), args=fn.get("arguments", ""), call_id=call.get("id", ""))
                 calls[call.get("id", "")] = step
                 turn.steps.append(step)
         elif role == "tool":
             step = calls.get(m.get("tool_call_id", ""))
             if step is not None:
                 step.result = text
+                if step.name == "screenshot":
+                    images = _images(content)
+                    step.image_present = bool(images)
+                    shot_step = None if images else step
+                    # An older image must not masquerade as this screenshot.
+                    turn.image_b64 = images[-1] if images else None
     for i, step in enumerate(turn.steps):
         if step.name == "snapshot" and step.result and not step.result.startswith("error"):
             turn.snapshot = step.result

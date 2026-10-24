@@ -1,4 +1,4 @@
-"""The VLM on Laptop B (UI-TARS-1.5 7B in Ollama by default). It answers four kinds of job from the orchestrator:
+"""The VLM on Laptop B (gemma4 in Ollama by default). It answers four kinds of job from the orchestrator:
 perceive (describe the masked screenshot as JSON), verify (is this click right, as JSON), chat (plain text, used for
 Nanobrowser's image probe and the grid) and locate (the point of a described element, grounding.py). Output for perceive
 and verify is constrained to its schema.
@@ -18,11 +18,11 @@ from .protocol import Job, Perception, Point, Verdict
 log = logging.getLogger("vlm_worker")
 
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
-VLM_MODEL = os.environ.get("VLM_MODEL", "hf.co/mradermacher/UI-TARS-1.5-7B-GGUF:Q4_K_M")
+VLM_MODEL = os.environ.get("VLM_MODEL", "gemma4")
 # The VLM's prompts are short (an image and a few hundred tokens), so a small window saves VRAM for the image.
 NUM_CTX = int(os.environ.get("VLM_NUM_CTX", "8192"))
 # A coordinate convention to use without calibrating (grounding.CONVENTIONS), or "off" for no locate jobs.
-VLM_COORDS = os.environ.get("VLM_COORDS", "")
+VLM_COORDS = os.environ.get("VLM_COORDS", "")  # gemma4 answers in "norm1000"
 
 SCHEMAS = {"perceive": Perception.model_json_schema(), "verify": Verdict.model_json_schema()}
 
@@ -97,7 +97,7 @@ class VlmModel:
             log.warning("locate calibration failed (%s): locate jobs are off", e)
             return
         point = grounding.parse_point(answer)
-        self.convention = grounding.pick_convention(point) if point else None
+        self.convention = grounding.pick_convention(point, VLM_MODEL) if point else None
         if self.convention:
             log.info("locate: convention %s (calibration answer %r)", self.convention, answer[:80])
         else:

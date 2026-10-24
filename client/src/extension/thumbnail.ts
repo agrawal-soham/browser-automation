@@ -1,5 +1,6 @@
 // JPEG copies of screenshots, made in the worker with OffscreenCanvas: small thumbnails beside a screenshot row of the
 // activity block and on the chip of a "Screenshot of this tab", and the full-size copy a vision model gets.
+import { privacy } from './privacy';
 
 /** The image redrawn as JPEG, at most `max` pixels on its longer side; base64 without a data: prefix. */
 async function toJpegBase64(
@@ -43,5 +44,5 @@ export async function modelImage(
 ): Promise<{ data: string; mediaType: string } | undefined> {
   if (mimeType === 'image/jpeg') return undefined;
   const jpeg = await toJpegBase64(base64, mimeType, Infinity, 0.85);
-  return jpeg ? { data: jpeg, mediaType: 'image/jpeg' } : undefined;
+  return jpeg && privacy.images.allowDerived(base64, jpeg) ? { data: jpeg, mediaType: 'image/jpeg' } : undefined;
 }

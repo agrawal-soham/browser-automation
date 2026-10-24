@@ -1,7 +1,7 @@
 // The list of images allowed to leave the browser: screenshots after the layer painted over every personal value, and
 // images the user attached on purpose. The network wrapper blocks a request that carries any other image. The images
-// travel unchanged from the layer to the request body (base64 PNG; nothing resizes or re-encodes them), so an exact
-// fingerprint of the base64 text is enough to recognise them.
+// are identified by exact base64 fingerprints. A trusted image conversion must explicitly carry the original's
+// approval to its derivative; re-encoding otherwise produces an unrecognised image.
 
 const MAX_KEPT = 200;
 
@@ -40,6 +40,14 @@ export class ImageRegistry {
   /** Where an outgoing image came from, or undefined for an image nobody registered (it must not leave). */
   sourceOf(image: string): ImageSource | undefined {
     return this.#allowed.get(fingerprint(base64Of(image)));
+  }
+
+  /** A trusted conversion may inherit approval only from an image already in this registry. */
+  allowDerived(original: string, derived: string): boolean {
+    const source = this.sourceOf(original);
+    if (!source) return false;
+    this.allow(derived, source);
+    return true;
   }
 }
 

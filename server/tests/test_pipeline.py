@@ -128,10 +128,17 @@ def test_endpoint_probe_snapshot_and_retry_loop(client):
     assert "e99" in app.state.text.calls[1][1]["content"]
 
 
+from orchestrator.pipeline.step import REFRESH_INTENT  # noqa: E402
+
+
 def test_endpoint_gives_up_with_ask_user_and_handles_refused_tag(client):
     c, app = client
-    app.state.text = FakeText([{"action": "click", "ref": "e99", "reason": "bad"}] * 3)
+    app.state.text = FakeText([{"action": "click", "ref": "e99", "reason": "bad"}] * 6)
+    # Three rejected answers: one fresh outline first, then the user is asked.
     call = post(c, agent_body([("snapshot", {}, OUTLINE)]))["tool_calls"][0]["function"]
+    assert call["name"] == "snapshot" and "rejected" in json.loads(call["arguments"])["intent"]
+    refresh = ("snapshot", json.loads(call["arguments"]), OUTLINE)
+    call = post(c, agent_body([("snapshot", {}, OUTLINE), refresh]))["tool_calls"][0]["function"]
     assert call["name"] == "ask_user"
 
     refused = "error UNKNOWN_TAG (nothing dispatched)\nThe placeholder [[PHONE_1]] is not a known value."
@@ -656,6 +663,10 @@ def test_a_visual_click_goes_through_the_grid_and_the_marker_check():
     # The marker check says no: no click; the note goes back to the model, and after the retries the user is asked.
     no = FakeLink(['{"cell": "A2"}', '{"square": 8}'] * 3, verdict={"ok": False, "reason": "the marker is on the Name Box"})
     r = run(form_body(plain), [a1] * 3, no)
+    assert r.own_call and r.own_call[1]["intent"] == REFRESH_INTENT and any("Name Box" in n for n in r.notes)
+    again = plain + [("snapshot", r.own_call[1], FORM + FILLER), ("screenshot", PLAIN_SHOT[1], PLAIN)]
+    no = FakeLink(['{"cell": "A2"}', '{"square": 8}'] * 3, verdict={"ok": False, "reason": "the marker is on the Name Box"})
+    r = run(form_body(again), [a1] * 3, no)
     assert r.command.action == "ask_user" and any("Name Box" in n for n in r.notes)
 
 

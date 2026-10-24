@@ -77,7 +77,8 @@ def takeover(label: str, tries: int, why: str) -> Command:
     )
 
 
-async def recover(cmd: Command, turn: Turn, link: VlmLink, screenshot_call: tuple[str, dict]) -> Recovery | None:
+async def recover(cmd: Command, turn: Turn, link: VlmLink, screenshot_call: tuple[str, dict],
+                  learned_failure: bool = False, vision_unavailable: bool = False) -> Recovery | None:
     """None when the click can go ahead as the model chose it; otherwise what to do instead."""
     if cmd.action != "click" or not cmd.ref:
         return None
@@ -93,6 +94,8 @@ async def recover(cmd: Command, turn: Turn, link: VlmLink, screenshot_call: tupl
     # wrong element five times running, because each new attempt started the ladder at the vision rung again.
     moved = [s for s in turn.steps_on_page() if f"The vision check found {label} at" in str(_intent(s))]
     n = len(failures) + len(moved)
+    if learned_failure:
+        n = max(n, 1)
     if n == 0:
         return None
     last_error = re.search(r"\berror ([A-Z_]{3,})", failures[-1].result) if failures else None
@@ -101,7 +104,8 @@ async def recover(cmd: Command, turn: Turn, link: VlmLink, screenshot_call: tupl
     if n >= MAX_TRIES_PER_ELEMENT:
         return Recovery(command=takeover(label, n, why), note=f"out of tries on {label}")
 
-    if n == 1 and link.connected and turn.can_screenshot:
+    missing = vision_unavailable or turn.missing_screenshot_since(turn.last_action_index())
+    if n == 1 and link.connected and turn.can_screenshot and not missing and not learned_failure:
         if turn.screenshot_is_stale() or not turn.screenshot_labelled:
             return Recovery(own_call=screenshot_call, note=f"fresh screenshot to locate {label} after one failure [line: {line}]")
         reply = await link.run("chat", locate_prompt(label), turn.image_b64)
@@ -115,7 +119,7 @@ async def recover(cmd: Command, turn: Turn, link: VlmLink, screenshot_call: tupl
         # The VLM saw nothing better: go straight to the keyboard.
         why = f"{why}; vision: {(where or {}).get('reason', 'no answer')}"
 
-    if n == 2 and link.connected and turn.can_screenshot:
+    if n == 2 and link.connected and turn.can_screenshot and not missing:
         # The grid click: step.py finds the point (a fresh screenshot without labels first) and checks it.
         return Recovery(
             command=Command(action="click", visual=f"the {label}", reason=f"Grid click on {label} ({why})"),

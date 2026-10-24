@@ -125,6 +125,15 @@ describe('swapIn', () => {
 });
 
 describe('images', () => {
+  it('carries approval to a converted image without approving an unknown original', () => {
+    const registry = new ImageRegistry();
+    expect(registry.allowDerived(IMAGE, `${IMAGE}converted`)).toBe(false);
+    expect(registry.sourceOf(`${IMAGE}converted`)).toBeUndefined();
+    registry.allow(IMAGE, 'masked-screenshot');
+    expect(registry.allowDerived(IMAGE, `${IMAGE}converted`)).toBe(true);
+    expect(registry.sourceOf(`${IMAGE}converted`)).toBe('masked-screenshot');
+  });
+
   it('withholds a content part with an unregistered image and keeps a registered one', () => {
     const registry = new ImageRegistry();
     registry.allow(IMAGE, 'masked-screenshot');

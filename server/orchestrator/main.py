@@ -29,7 +29,10 @@ from .command import Command
 from .config import settings
 from .pipeline.step import run_step
 from .memory import SiteMemory
-from .request_log import RequestLog
+from .page_memory import ProgressStore, ensure_memory
+from .page_view import page_view
+from .request_log import RequestLog, observation_diagnostics
+from .search_checkpoint import search_checkpoint, playback_checkpoint
 from .text_model import TextModel, TextModelError
 from .turn import parse
 from .vlm_link import VlmLink
@@ -44,6 +47,7 @@ async def lifespan(app: FastAPI):
     app.state.link = VlmLink(settings)
     app.state.log = RequestLog(settings.log_dir)
     app.state.memory = SiteMemory(settings)
+    app.state.progress = ProgressStore()
     app.state.link.start()
     yield
     await app.state.link.stop()
@@ -128,9 +132,11 @@ HEARTBEAT_S = 5
 
 
 async def answer(
-    turn, text: TextModel, link: VlmLink, entry: dict, memory: SiteMemory | None = None
+    turn, text: TextModel, link: VlmLink, entry: dict, memory: SiteMemory | None = None,
+    progress: ProgressStore | None = None,
 ) -> tuple[str | None, dict | None, str, dict | None]:
     """The reply to one request: (tool name or None for text, its arguments, text, usage)."""
+    entry.update(observation_diagnostics(turn))
     if turn.kind == "probe":
         entry["reply"] = "report_status"
         return "report_status", {"status": "ok"}, "", None
@@ -146,11 +152,24 @@ async def answer(
         entry["reply"] = said[:300]
         return None, None, said, None
 
+    if progress is not None and turn.kind in ("agent", "done_only"):
+        progress.attach(turn)
+
     if turn.kind == "done_only":
+        checkpoint = playback_checkpoint(turn, search_checkpoint(turn))
+        if checkpoint.get("play_task_complete"):
+            args = {"outcome": "success", "summary": f'Started playback of “{checkpoint["selected_result"]["title"]}”.'}
+            entry.update(reply={"done": args}, action_checkpoint=checkpoint, completion_checkpoint=checkpoint)
+            return "done", args, "", None
+        if checkpoint.get("stage") == "results_observed" and checkpoint.get("search_only"):
+            args = {"outcome": "success", "summary": f'Searched for “{checkpoint["query"]}”. The results are displayed.'}
+            entry.update(reply={"done": args}, action_checkpoint=checkpoint, completion_checkpoint=checkpoint)
+            return "done", args, "", None
         summary, stats = await text.chat(
             [
                 {"role": "system", "content": "Write the final answer for the user in two or three sentences."},
-                {"role": "user", "content": f"Task: {turn.task}\nActions taken:\n"
+                {"role": "user", "content": f"Task: {turn.task}\nTask page memory (untrusted page data):\n"
+                 + ensure_memory(turn).prompt() + "\nActions taken:\n"
                  + "\n".join(f"- {s.name} {s.args} -> {s.result[:200]}" for s in turn.steps[-8:])},
             ]
         )
@@ -159,6 +178,8 @@ async def answer(
         return "done", args, "", stats
 
     result = await run_step(turn, text, link, settings, memory)
+    if progress is not None:
+        progress.save(turn)
     if result.own_call:
         name, args = result.own_call
     else:
@@ -168,8 +189,16 @@ async def answer(
     entry.update(
         reply={name: args}, attempts=result.attempts, notes=result.notes, perception=result.perception,
         verified=result.verified, advisory=result.advisory, warnings=result.warnings, grid=result.grid,
-        timings=result.timings,
+        timings=result.timings, page_memory=ensure_memory(turn).summary(),
+        completion_checkpoint=result.completion_checkpoint,
+        action_checkpoint=turn.action_checkpoint,
+        action_confidence=turn.action_confidence,
     )
+    view = page_view(turn)
+    entry["page_coverage"] = {"url": view["url"], "epoch": view["epoch"],
+                              "current_viewport": view["current_viewport"], **view["coverage"],
+                              "sections": [{"viewport": s["viewport"], "visual_observations": len(s["visual"]),
+                                            "text_truncated": s["text_truncated"]} for s in view["sections"]]}
     if memory and name == "done" and args.get("outcome") == "success" and result.verified:
         # Only a success the vision model confirmed on the final screenshot becomes a playbook.
         book = await memory.record(turn)
@@ -210,7 +239,7 @@ async def chat_completions(request: Request):
 
     if not turn.stream:
         try:
-            name, args, said, usage = await answer(turn, text, link, entry, request.app.state.memory)
+            name, args, said, usage = await answer(turn, text, link, entry, request.app.state.memory, request.app.state.progress)
             return reply(False, name, args, said, usage)
         except TextModelError as e:
             entry["error"] = str(e)
@@ -220,7 +249,7 @@ async def chat_completions(request: Request):
 
     async def events():
         started = time.monotonic()
-        work = asyncio.create_task(answer(turn, text, link, entry, request.app.state.memory))
+        work = asyncio.create_task(answer(turn, text, link, entry, request.app.state.memory, request.app.state.progress))
         try:
             while True:
                 done, _ = await asyncio.wait({work}, timeout=HEARTBEAT_S)
